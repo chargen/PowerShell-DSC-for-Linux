@@ -4962,7 +4962,6 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
 
     def remove_nxautomation_user_and_group(self):
         subprocess.call(["userdel", self.automation_user])
-        subprocess.call(["groupdel", self.automation_user])
 
     def setUp(self):
         """
@@ -5007,33 +5006,33 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
 
         if os.path.isfile(nxOMSAutomationWorker.OMS_CONF_FILE_PATH):
             os.remove(nxOMSAutomationWorker.OMS_CONF_FILE_PATH)
-        workspace_id, azure_dns_agent_svc_zone, updates_enabled, diy_enabled = nxOMSAutomationWorker.read_settings_from_mof_json(
+        settings = nxOMSAutomationWorker.read_settings_from_mof_json(
             auto_enabled_manual_enabled)
-        nxOMSAutomationWorker.write_omsconf_file(workspace_id, updates_enabled, diy_enabled)
+        nxOMSAutomationWorker.write_omsconf_file(settings.workspace_id, settings.updates_enabled, settings.diy_enabled)
         self.assertTrue(filecmp.cmp(os.path.join(self.dummyFileLocation, "oms_conf_auto_manual.conf"),
                                     nxOMSAutomationWorker.OMS_CONF_FILE_PATH))
 
         if os.path.isfile(nxOMSAutomationWorker.OMS_CONF_FILE_PATH):
             os.remove(nxOMSAutomationWorker.OMS_CONF_FILE_PATH)
-        workspace_id, azure_dns_agent_svc_zone, updates_enabled, diy_enabled = nxOMSAutomationWorker.read_settings_from_mof_json(
+        settings = nxOMSAutomationWorker.read_settings_from_mof_json(
             auto_disabled_manual_enabled)
-        nxOMSAutomationWorker.write_omsconf_file(workspace_id, updates_enabled, diy_enabled)
+        nxOMSAutomationWorker.write_omsconf_file(settings.workspace_id, settings.updates_enabled, settings.diy_enabled)
         self.assertTrue(filecmp.cmp(os.path.join(self.dummyFileLocation, "oms_conf_manual.conf"),
                                     nxOMSAutomationWorker.OMS_CONF_FILE_PATH))
 
         if os.path.isfile(nxOMSAutomationWorker.OMS_CONF_FILE_PATH):
             os.remove(nxOMSAutomationWorker.OMS_CONF_FILE_PATH)
-        workspace_id, azure_dns_agent_svc_zone, updates_enabled, diy_enabled = nxOMSAutomationWorker.read_settings_from_mof_json(
+        settings = nxOMSAutomationWorker.read_settings_from_mof_json(
             auto_enabled_manual_disabled)
-        nxOMSAutomationWorker.write_omsconf_file(workspace_id, updates_enabled, diy_enabled)
+        nxOMSAutomationWorker.write_omsconf_file(settings.workspace_id, settings.updates_enabled, settings.diy_enabled)
         self.assertTrue(filecmp.cmp(os.path.join(self.dummyFileLocation, "oms_conf_auto.conf"),
                                     nxOMSAutomationWorker.OMS_CONF_FILE_PATH))
 
         if os.path.isfile(nxOMSAutomationWorker.OMS_CONF_FILE_PATH):
             os.remove(nxOMSAutomationWorker.OMS_CONF_FILE_PATH)
-        workspace_id, azure_dns_agent_svc_zone, updates_enabled, diy_enabled = nxOMSAutomationWorker.read_settings_from_mof_json(
+        settings = nxOMSAutomationWorker.read_settings_from_mof_json(
             auto_disabled_manual_disabled)
-        nxOMSAutomationWorker.write_omsconf_file(workspace_id, updates_enabled, diy_enabled)
+        nxOMSAutomationWorker.write_omsconf_file(settings.workspace_id, settings.updates_enabled, settings.diy_enabled)
         self.assertTrue(filecmp.cmp(os.path.join(self.dummyFileLocation, "oms_conf_none.conf"),
                                     nxOMSAutomationWorker.OMS_CONF_FILE_PATH))
 
@@ -5062,10 +5061,12 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
     def test_is_worker_conf_properly_configured(self):
         self.assertTrue(nxOMSAutomationWorker.is_worker_conf_properly_configured(self.workspace_id))
         self.assertFalse(nxOMSAutomationWorker.is_worker_conf_properly_configured(self.agent_id))
+
     def test_get_diy_account_id(self):
-        self.assertTrue(nxOMSAutomationWorker.get_diy_account_id(self) == "cfd4ef08-4011-428a-8947-0c2f4605980h")
+        self.assertTrue(nxOMSAutomationWorker.get_diy_account_id() == "cfd4ef08-4011-428a-8947-0c2f4605980h")
         os.remove(nxOMSAutomationWorker.AUTO_REGISTERED_WORKER_CONF_PATH)
-        self.assertFalse(nxOMSAutomationWorker.get_diy_account_id(self))
+        self.assertFalse(nxOMSAutomationWorker.get_diy_account_id())
+        # shutil.copyfile(os.path.join(self.dummyFileLocation, "worker.conf"), nxOMSAutomationWorker.AUTO_REGISTERED_WORKER_CONF_PATH)
 
 ######################################
 if __name__ == '__main__':
