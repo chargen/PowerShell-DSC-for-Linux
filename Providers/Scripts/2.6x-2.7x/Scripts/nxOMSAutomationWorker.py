@@ -11,6 +11,7 @@ import time
 import logging
 import logging.handlers
 import pwd
+import re
 
 import imp
 protocol = imp.load_source('protocol', '../protocol.py')
@@ -382,8 +383,8 @@ def start_worker_manager_process(workspace_id):
     :param workspace_id:
     :return: the pid of the worker manager process
     """
-    proc = subprocess.Popen(["sudo", "-u", AUTOMATION_USER, "python", WORKER_MANAGER_START_PATH, OMS_CONF_FILE_PATH, workspace_id,
-                             get_module_version()])
+    proc = subprocess.Popen(["sudo", "-u", AUTOMATION_USER, "python", WORKER_MANAGER_START_PATH, OMS_CONF_FILE_PATH,
+                             "rworkspace:" + workspace_id, get_module_version()])
     for i in range(0, 5):
         time.sleep(3)
         pid = get_worker_manager_pid_and_version(workspace_id, throw_error_on_multiple_found=False)[0]
@@ -401,16 +402,10 @@ def get_worker_manager_pid_and_version(workspace_id, throw_error_on_multiple_fou
     Returns the PID of the worker manager
     :return: pid of the worker manager, -1 if it isn't running
     """
-    if 'COLUMNS' in os.environ:
-        os.environ['COLUMNS'] = "3000"
-    else:
-        log(DEBUG, "environment variable COLUMNS was not found")
-    proc = subprocess.Popen(["ps", "-u", AUTOMATION_USER, "-o", "pid=", "-o", "args="], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    command, error = proc.communicate()
+    error, proc, processes = get_automationuser_processes()
     if proc.returncode != 0 or error:
         log(INFO, "Failed to detect instance of worker manager")
         return -1, "0.0"
-    processes = command.strip().split('\n')
     manager_processes_found = 0
     pid = -1
     version = "0.0"
@@ -430,6 +425,31 @@ def get_worker_manager_pid_and_version(workspace_id, throw_error_on_multiple_fou
     return pid, version
 
 
+class Filter:
+    workpsace_id = ""
+    def __init__(self, workspace_id):
+        self.workpsace_id = workspace_id
+    def detect_stray_workspace(self, ps_string):
+        uuid_pattern = re.compile("[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}")
+        return uuid_pattern.findall(ps_string.lower()) and self.workpsace_id not in ps_string
+
+
+
+def get_automationuser_processes():
+    if 'COLUMNS' in os.environ:
+        os.environ['COLUMNS'] = "3000"
+    else:
+        log(DEBUG, "environment variable COLUMNS was not found")
+    proc = subprocess.Popen(["ps", "-u", AUTOMATION_USER, "-o", "pid=", "-o", "args="], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    command, error = proc.communicate()
+    command = command.strip()
+    if command:
+        processes = [x.strip() for x in command.split('\n')]
+    else:
+        processes = []
+    return error, proc, processes
+
 def is_worker_manager_running_latest_version(workspace_id):
     try:
         pid, running_version = get_worker_manager_pid_and_version(workspace_id)
@@ -442,6 +462,22 @@ def is_worker_manager_running_latest_version(workspace_id):
     return pid > 0 and running_version == available_version
 
 
+def kill_stray_processes(workspace_id):
+    error, proc, processes = get_automationuser_processes()
+    for wrkspc_id in get_stray_worker_and_manager_pids(processes, workspace_id):
+        kill_process_by_pattern_string(wrkspc_id)
+
+def get_stray_worker_and_manager_pids(processes, workspace_id):
+    """
+    Gets the pids of the workers and that are running in the context of another user
+    :param workspace_id:
+    :return: list of pids not running in context of workspace_id
+    """
+    uuid_pattern = re.compile("rworkspace:([a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})")
+    all_workspaces = [uuid_pattern.search(x).group(1) for x in processes if uuid_pattern.findall(x.lower())]
+    return set(all_workspaces).difference([workspace_id])
+
+
 def kill_worker_manager(workspace_id):
     """ Worker manger process if it exists
     Exceptions:
@@ -449,21 +485,26 @@ def kill_worker_manager(workspace_id):
     """
     pattern_match_string = "python\s.*main\.py.*\s%s\s" %workspace_id
 
-    #---- section for debugging
-    proc = subprocess.Popen(["pgrep", "-u", AUTOMATION_USER, "-f", pattern_match_string], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    result, error = proc.communicate()
-    result = str(result)
-    result = result.replace('\n', ' ')
-    log(DEBUG, "The following worker manager processes will be terminated: %s" %result)
-    #---- end section
-
-    subprocess.call(["sudo", "pkill", "-u", AUTOMATION_USER, "-f", pattern_match_string])
+    kill_process_by_pattern_string(pattern_match_string)
     # can't depend on the return value to ensure that the process was killed since it pattern matches
     pid, version = get_worker_manager_pid_and_version(workspace_id)
     if pid > 0:
         # worker was not killed
         raise OSError("Could not kill worker manager process")
     log(DEBUG, "Processes for worker manager were terminated successfully")
+
+
+def kill_process_by_pattern_string(pattern_match_string):
+    # ---- section for debugging
+    proc = subprocess.Popen(["pgrep", "-u", AUTOMATION_USER, "-f", pattern_match_string], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    result, error = proc.communicate()
+    result = str(result)
+    result = result.replace('\n', ' ')
+    log(DEBUG, "The following worker manager processes will be terminated: %s" % result)
+    # ---- end section
+    subprocess.call(["sudo", "pkill", "-u", AUTOMATION_USER, "-f", pattern_match_string])
+
 
 def get_module_version():
     """
