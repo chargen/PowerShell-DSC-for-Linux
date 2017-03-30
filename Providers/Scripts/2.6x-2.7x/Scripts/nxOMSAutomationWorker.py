@@ -138,9 +138,6 @@ def Test_Marshall(ResourceSettings):
     if not os.path.isfile(OMS_CONF_FILE_PATH):
         log(INFO, "Test_Marshall returned [-1]: oms.conf file not found")
         return [-1]
-    if settings.updates_enabled and not is_worker_conf_properly_configured(settings.workspace_id):
-        log(INFO, "Test_Marshall returned [-1]: worker.conf for auto register is either missing or improperly configured")
-        return [-1]
     if (settings.updates_enabled or settings.diy_enabled ) and is_worker_manager_running_latest_version(settings.workspace_id) is False:
         # Either the worker manager is not running, or its not latest
         log(INFO, "Test_Marshall returned [-1]: worker manager isn't running or is not latest")
@@ -244,29 +241,6 @@ def get_diy_account_id():
 
 def get_manually_registered_worker_conf_path(workspace_id):
     return "/var/opt/microsoft/omsagent/%s/state/automationworker/diy/worker.conf" %workspace_id
-
-
-def is_worker_conf_properly_configured(workspace_id):
-    """
-    test whether the worker.conf file for auto-register has the same workspace id as the one passed into the function
-    :return: True if the above test passes, False otherwise
-    """
-    if not os.path.isfile(AUTO_REGISTERED_WORKER_CONF_PATH):
-        log(INFO, "is_worker_conf_properly_configured returned False: worker.conf file for auto-register not found")
-        return False
-    try:
-        worker_conf = ConfigParser.ConfigParser()
-        worker_conf.read(AUTO_REGISTERED_WORKER_CONF_PATH)
-        if worker_conf.get(SECTION_OMS_METADATA, OPTION_WORKSPACE_ID) == workspace_id:
-            log(DEBUG, "is_worker_conf_properly_configured returned True")
-            return True
-        else:
-            log(INFO, "is_worker_conf_properly_configured returned False: workspace_id did not match")
-            return False
-
-    except BaseException, e:
-        log(INFO, "is_worker_conf_properly_configured returned False: %s" % e.message)
-        return False
 
 
 class Settings:

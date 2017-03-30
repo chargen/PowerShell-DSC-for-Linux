@@ -5058,10 +5058,6 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
                     else:
                         self.assertFalse(result)
 
-    def test_is_worker_conf_properly_configured(self):
-        self.assertTrue(nxOMSAutomationWorker.is_worker_conf_properly_configured(self.workspace_id))
-        self.assertFalse(nxOMSAutomationWorker.is_worker_conf_properly_configured(self.agent_id))
-
     def test_get_diy_account_id(self):
         self.assertTrue(nxOMSAutomationWorker.get_diy_account_id() == "cfd4ef08-4011-428a-8947-0c2f4605980h")
         os.remove(nxOMSAutomationWorker.AUTO_REGISTERED_WORKER_CONF_PATH)
