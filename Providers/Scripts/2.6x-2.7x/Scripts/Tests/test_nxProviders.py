@@ -5057,6 +5057,10 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
                     else:
                         self.assertFalse(result)
 
+    def test_is_worker_conf_properly_configured(self):
+        self.assertTrue(nxOMSAutomationWorker.is_worker_conf_properly_configured(self.workspace_id))
+        self.assertFalse(nxOMSAutomationWorker.is_worker_conf_properly_configured(self.agent_id))
+
 
 ######################################
 if __name__ == '__main__':

@@ -53,39 +53,52 @@ def Set_Marshall(ResourceSettings):
         if os.stat(WORKER_STATE_DIR).st_mode & PERMISSION_LEVEL_0777 != PERMISSION_LEVEL_0770:
             # bitwise AND with PERMISSION_LEVEL_0777 will give true permission level
             os.chmod(WORKER_STATE_DIR, PERMISSION_LEVEL_0770)
+    except Exception, e:
+        log(ERROR, "Set_Marshall returned [-1] with following error %s" % e.message)
+        return [-1]
 
+    try:
         # Create the configuration object
         write_omsconf_file(settings.workspace_id, settings.updates_enabled, settings.diy_enabled)
         os.chmod(OMS_CONF_FILE_PATH, PERMISSION_LEVEL_0770)
 
         log(DEBUG, "oms.conf file was written")
+    except Exception, e:
+        log(ERROR, "Set_Marshall returned [-1] with following error %s" % e.message)
+        return [-1]
 
-        # Write worker.conf file
-        oms_workspace_id, agent_id = read_oms_primary_workspace_config_file()
-        # If both proxy files exist use the new one
-        # If neither exist use the new path, path will have no file in it, but no file means no proxy set up
-        # If one of them exists, use that
-        proxy_conf_path = PROXY_CONF_PATH_NEW
-        if not os.path.isfile(PROXY_CONF_PATH_NEW) and os.path.isfile(PROXY_CONF_PATH_LEGACY):
-            proxy_conf_path = PROXY_CONF_PATH_LEGACY
-        args = ["python", REGISTRATION_FILE_PATH, "--register", "-w", settings.workspace_id, "-a", agent_id, "-c",
-                OMS_CERTIFICATE_PATH, "-k", OMS_CERT_KEY_PATH, "-f", WORKING_DIRECTORY_PATH, "-s", WORKER_STATE_DIR,
-                "-e", settings.azure_dns_agent_svc_zone, "-p", proxy_conf_path, "-g", KEYRING_PATH]
-        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = proc.communicate()
-        # log(DEBUG, "Trying to register Linux hybrid worker with args: %s" % str(args))
-        if proc.returncode != 0:
-            log(ERROR, "Linux Hybrid Worker registration failed: " + stderr + "\n" + stdout)
-            return [-1]
-        if not os.path.isfile(AUTO_REGISTERED_WORKER_CONF_PATH):
-            log(ERROR, "Linux Hybrid Worker registration file could not be created")
-            return [-1]
-        else:
-            os.chmod(AUTO_REGISTERED_WORKER_CONF_PATH, PERMISSION_LEVEL_0770)
+    try:
+        # register the auto worker if required
+        if settings.updates_enabled:
+            # Write worker.conf file
+            oms_workspace_id, agent_id = read_oms_primary_workspace_config_file()
+            # If both proxy files exist use the new one
+            # If neither exist use the new path, path will have no file in it, but no file means no proxy set up
+            # If one of them exists, use that
+            proxy_conf_path = PROXY_CONF_PATH_NEW
+            if not os.path.isfile(PROXY_CONF_PATH_NEW) and os.path.isfile(PROXY_CONF_PATH_LEGACY):
+                proxy_conf_path = PROXY_CONF_PATH_LEGACY
+            args = ["python", REGISTRATION_FILE_PATH, "--register", "-w", settings.workspace_id, "-a", agent_id, "-c",
+                    OMS_CERTIFICATE_PATH, "-k", OMS_CERT_KEY_PATH, "-f", WORKING_DIRECTORY_PATH, "-s", WORKER_STATE_DIR,
+                    "-e", settings.azure_dns_agent_svc_zone, "-p", proxy_conf_path, "-g", KEYRING_PATH]
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, stderr = proc.communicate()
+            # log(DEBUG, "Trying to register Linux hybrid worker with args: %s" % str(args))
+            if proc.returncode != 0:
+                log(ERROR, "Linux Hybrid Worker registration failed: Return code %s :" % str(proc.returncode)
+                    + stderr + "\n" + stdout)
+                if proc.returncode == -5:
+                    log(ERROR, "Linux Hybrid Worker registration failed: DIY and auto-register agent ids do not match")
+                    log(INFO, "Worker manager with be started without auto registered worker")
+            elif not os.path.isfile(AUTO_REGISTERED_WORKER_CONF_PATH):
+                log(ERROR, "Linux Hybrid Worker registration file could not be created")
+            else:
+                os.chmod(AUTO_REGISTERED_WORKER_CONF_PATH, PERMISSION_LEVEL_0770)
+    except Exception, e:
+        pass
 
-
+    try:
         # start the worker manager proc
-
         if (settings.updates_enabled or settings.diy_enabled) and start_worker_manager_process(settings.workspace_id) < 0:
             log(ERROR, "Worker manager process could not be started. Set_Marshall returned [-1]")
             return [-1]
@@ -117,6 +130,9 @@ def Test_Marshall(ResourceSettings):
     if not os.path.isfile(OMS_CONF_FILE_PATH):
         log(INFO, "Test_Marshall returned [-1]: oms.conf file not found")
         return [-1]
+    if settings.updates_enabled and not is_worker_conf_properly_configured(settings.workspace_id):
+        log(INFO, "Test_Marshall returned [-1]: worker.conf for auto register is either missing or improperly configured")
+        return [-1]
     if (settings.updates_enabled or settings.diy_enabled ) and is_worker_manager_running_latest_version(settings.workspace_id) is False:
         # Either the worker manager is not running, or its not latest
         log(INFO, "Test_Marshall returned [-1]: worker manager isn't running or is not latest")
@@ -128,6 +144,7 @@ def Test_Marshall(ResourceSettings):
         # Current oms.conf is inconsistent with the mof
         log(INFO, "Test_Marshall returned [-1]: oms.conf differs from configuration mof")
         return [-1]
+
 
     # All went well
     log(DEBUG, "Test_Marshall returned [0]")
@@ -166,12 +183,11 @@ OPTION_RESOURCE_VERSION = "resource_version"
 OPTION_HYBRID_WORKER_PATH = "hybrid_worker_path"
 OPTION_DISABLE_WORKER_CREATION = "disable_worker_creation"
 
+SECTION_OMS_METADATA = "oms-metadata"
 
 WORKER_STATE_DIR = "/var/opt/microsoft/omsagent/state/automationworker"
-DIY_WORKER_STATE_DIR = os.path.join(WORKER_STATE_DIR, "diy")
 OMS_CONF_FILE_PATH = os.path.join(WORKER_STATE_DIR, "oms.conf")
 AUTO_REGISTERED_WORKER_CONF_PATH = os.path.join(WORKER_STATE_DIR, "worker.conf")
-MANUALLY_REGISTERED_WORKER_CONF_PATH = os.path.join(DIY_WORKER_STATE_DIR, "worker.conf")
 STATE_CONF_FILE_PATH = os.path.join(WORKER_STATE_DIR, "state.conf")
 
 DSC_RESOURCE_VERSION_FILE = "/opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/VERSION"
@@ -197,7 +213,34 @@ AUTOMATION_USER = "nxautomation"
 LOCAL_LOG_LOCATION = "/var/opt/microsoft/omsagent/log/nxOMSAutomationWorker.log"
 LOG_LOCALLY = False
 
+
 # User defined functions
+def get_manually_registered_worker_conf_path(workspace_id):
+    return "/var/opt/microsoft/omsagent/%s/state/automationworker/diy/worker.conf" %workspace_id
+
+
+def is_worker_conf_properly_configured(workspace_id):
+    """
+    test whether the worker.conf file for auto-register has the same workspace id as the one passed into the function
+    :return: True if the above test passes, False otherwise
+    """
+    if not os.path.isfile(AUTO_REGISTERED_WORKER_CONF_PATH):
+        log(INFO, "is_worker_conf_properly_configured returned False: worker.conf file for auto-register not found")
+        return False
+    try:
+        worker_conf = ConfigParser.ConfigParser()
+        worker_conf.read(AUTO_REGISTERED_WORKER_CONF_PATH)
+        if worker_conf.get(SECTION_OMS_WORKER_CONF, SECTION_OMS_METADATA, OPTION_WORKSPACE_ID) == workspace_id:
+            log(DEBUG, "is_worker_conf_properly_configured returned True")
+            return True
+        else:
+            log(INFO, "is_worker_conf_properly_configured returned False: workspace_id did not match")
+            return False
+
+    except BaseException, e:
+        log(INFO, "is_worker_conf_properly_configured returned False: %s" % e.message)
+        return False
+
 
 class Settings:
     workspace_id = ""
@@ -259,7 +302,7 @@ def write_omsconf_file(workspace_id, updates_enabled, diy_enabled):
         oms_config.remove_option(SECTION_OMS_WORKER_CONF, OPTION_AUTO_REGISTERED_WORKER_CONF_PATH)
     if diy_enabled:
         oms_config.set(SECTION_OMS_WORKER_CONF, OPTION_MANUALLY_REGISTERED_WORKER_CONF_PATH,
-                       MANUALLY_REGISTERED_WORKER_CONF_PATH)
+                       get_manually_registered_worker_conf_path(workspace_id))
     else:
         oms_config.remove_option(SECTION_OMS_WORKER_CONF, OPTION_MANUALLY_REGISTERED_WORKER_CONF_PATH)
 
