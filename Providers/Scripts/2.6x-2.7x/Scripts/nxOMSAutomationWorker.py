@@ -78,9 +78,17 @@ def Set_Marshall(ResourceSettings):
             proxy_conf_path = PROXY_CONF_PATH_NEW
             if not os.path.isfile(PROXY_CONF_PATH_NEW) and os.path.isfile(PROXY_CONF_PATH_LEGACY):
                 proxy_conf_path = PROXY_CONF_PATH_LEGACY
-            args = ["python", REGISTRATION_FILE_PATH, "--register", "-w", settings.workspace_id, "-a", agent_id, "-c",
-                    OMS_CERTIFICATE_PATH, "-k", OMS_CERT_KEY_PATH, "-f", WORKING_DIRECTORY_PATH, "-s", WORKER_STATE_DIR,
-                    "-e", settings.azure_dns_agent_svc_zone, "-p", proxy_conf_path, "-g", KEYRING_PATH]
+            diy_account_id = get_diy_account_id()
+            if diy_account_id:
+                args = ["python", REGISTRATION_FILE_PATH, "--register", "-w", settings.workspace_id, "-a", agent_id,"-c",
+                        OMS_CERTIFICATE_PATH, "-k", OMS_CERT_KEY_PATH, "-f", WORKING_DIRECTORY_PATH, "-s", WORKER_STATE_DIR,
+                        "-e", settings.azure_dns_agent_svc_zone, "-p", proxy_conf_path, "-g", KEYRING_PATH, "-y",
+                        diy_account_id]
+            else:
+                args = ["python", REGISTRATION_FILE_PATH, "--register", "-w", settings.workspace_id, "-a", agent_id,
+                        "-c", OMS_CERTIFICATE_PATH, "-k", OMS_CERT_KEY_PATH, "-f", WORKING_DIRECTORY_PATH, "-s",
+                        WORKER_STATE_DIR, "-e", settings.azure_dns_agent_svc_zone, "-p", proxy_conf_path, "-g",
+                        KEYRING_PATH]
             proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stdout, stderr = proc.communicate()
             # log(DEBUG, "Trying to register Linux hybrid worker with args: %s" % str(args))
@@ -185,9 +193,14 @@ OPTION_DISABLE_WORKER_CREATION = "disable_worker_creation"
 
 SECTION_OMS_METADATA = "oms-metadata"
 
+SECTION_WORKER_REQUIRED = "worker-required"
+OPTION_ACCOUNT_ID = "account_id"
+
 WORKER_STATE_DIR = "/var/opt/microsoft/omsagent/state/automationworker"
+DIY_WORKER_STATE_DIR = os.path.join(WORKER_STATE_DIR, "diy")
 OMS_CONF_FILE_PATH = os.path.join(WORKER_STATE_DIR, "oms.conf")
 AUTO_REGISTERED_WORKER_CONF_PATH = os.path.join(WORKER_STATE_DIR, "worker.conf")
+DIY_WORKER_CONF_PATH = os.path.join(DIY_WORKER_STATE_DIR, "worker.conf")
 STATE_CONF_FILE_PATH = os.path.join(WORKER_STATE_DIR, "state.conf")
 
 DSC_RESOURCE_VERSION_FILE = "/opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/VERSION"
@@ -213,8 +226,22 @@ AUTOMATION_USER = "nxautomation"
 LOCAL_LOG_LOCATION = "/var/opt/microsoft/omsagent/log/nxOMSAutomationWorker.log"
 LOG_LOCALLY = False
 
+########### User defined functions ###########
 
-# User defined functions
+
+def get_diy_account_id():
+    """
+    Gets the account id from diy conf file
+    :return: The account id if the configuration file exists, otherwise None
+    """
+    try:
+        diy_config = ConfigParser.ConfigParser()
+        diy_config.read(DIY_WORKER_CONF_PATH)
+        return diy_config.get(SECTION_WORKER_REQUIRED, OPTION_ACCOUNT_ID)
+    except:
+        return None
+
+
 def get_manually_registered_worker_conf_path(workspace_id):
     return "/var/opt/microsoft/omsagent/%s/state/automationworker/diy/worker.conf" %workspace_id
 

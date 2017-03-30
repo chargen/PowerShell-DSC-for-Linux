@@ -4932,12 +4932,12 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
     nxOMSAutomationWorker.WORKER_CONF_DIR = temp_run_dir
     nxOMSAutomationWorker.OMS_CONF_FILE_PATH = os.path.join(temp_run_dir, "oms.conf")
     nxOMSAutomationWorker.AUTO_REGISTERED_WORKER_CONF_PATH = os.path.join(temp_run_dir, "worker.conf")
-    nxOMSAutomationWorker.MANUALLY_REGISTERED_WORKER_CONF_PATH = os.path.join(temp_run_dir, "diy.conf")
     nxOMSAutomationWorker.WORKER_MANAGER_START_PATH = os.path.join(dummyFileLocation, 'main.py')
     nxOMSAutomationWorker.DSC_RESOURCE_VERSION_FILE = os.path.join(dummyFileLocation, 'VERSION')
     nxOMSAutomationWorker.LOCAL_LOG_LOCATION = os.path.join(temp_run_dir, 'nxOMSAutomationWorker.log')
     nxOMSAutomationWorker.LOG_LOCALLY = True
     nxOMSAutomationWorker.OMS_ADMIN_CONFIG_FILE = os.path.join(dummyFileLocation, 'omsadmin.conf')
+    nxOMSAutomationWorker.DIY_WORKER_CONF_PATH = nxOMSAutomationWorker.AUTO_REGISTERED_WORKER_CONF_PATH
 
     automation_user = "nxautomation"
 
@@ -4981,7 +4981,7 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
         Remove test resoruces
         """
         subprocess.call(["sudo", "pkill", "-u", self.automation_user])
-        shutil.rmtree(self.temp_run_dir)
+        shutil.rmtree(self.temp_run_dir, ignore_errors=True)
         self.remove_nxautomation_user_and_group()
 
 
@@ -5062,7 +5062,10 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
     def test_is_worker_conf_properly_configured(self):
         self.assertTrue(nxOMSAutomationWorker.is_worker_conf_properly_configured(self.workspace_id))
         self.assertFalse(nxOMSAutomationWorker.is_worker_conf_properly_configured(self.agent_id))
-
+    def test_get_diy_account_id(self):
+        self.assertTrue(nxOMSAutomationWorker.get_diy_account_id(self) == "cfd4ef08-4011-428a-8947-0c2f4605980h")
+        os.remove(nxOMSAutomationWorker.AUTO_REGISTERED_WORKER_CONF_PATH)
+        self.assertFalse(nxOMSAutomationWorker.get_diy_account_id(self))
 
 ######################################
 if __name__ == '__main__':
