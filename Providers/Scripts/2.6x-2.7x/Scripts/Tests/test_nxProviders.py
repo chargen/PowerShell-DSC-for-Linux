@@ -4973,6 +4973,8 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
         # create nxautomation user on the machine
         self.create_nxautomation_user_and_group()
         subprocess.call(["sudo", "pkill", "-u", self.automation_user])
+        shutil.copyfile(os.path.join(self.dummyFileLocation, "worker.conf"),
+                        nxOMSAutomationWorker.AUTO_REGISTERED_WORKER_CONF_PATH)
 
     def tearDown(self):
         """

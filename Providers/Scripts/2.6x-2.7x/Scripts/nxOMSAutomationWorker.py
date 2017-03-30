@@ -230,7 +230,7 @@ def is_worker_conf_properly_configured(workspace_id):
     try:
         worker_conf = ConfigParser.ConfigParser()
         worker_conf.read(AUTO_REGISTERED_WORKER_CONF_PATH)
-        if worker_conf.get(SECTION_OMS_WORKER_CONF, SECTION_OMS_METADATA, OPTION_WORKSPACE_ID) == workspace_id:
+        if worker_conf.get(SECTION_OMS_METADATA, OPTION_WORKSPACE_ID) == workspace_id:
             log(DEBUG, "is_worker_conf_properly_configured returned True")
             return True
         else:
