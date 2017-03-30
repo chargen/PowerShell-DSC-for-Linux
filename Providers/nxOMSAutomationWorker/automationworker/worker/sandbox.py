@@ -55,6 +55,10 @@ class Sandbox:
     def __init__(self):
         self.sandbox_id = os.environ["sandbox_id"]
         tracer.log_sandbox_starting(os.getpid())
+        tracer.log_sandbox_configuration(sandbox_id=self.sandbox_id,
+                                         enforce_runbook_signature_validation=configuration.get_enforce_runbook_signature_validation(),
+                                         gpg_public_keyring_paths=configuration.get_gpg_public_keyrings_path(),
+                                         working_directory=os.getcwd())
 
         http_client_factory = HttpClientFactory(configuration.get_jrds_cert_path(), configuration.get_jrds_key_path(),
                                                 configuration.get_verify_certificates())

@@ -10,6 +10,7 @@ import re
 import socket
 import sys
 from optparse import OptionParser
+import shutil
 
 # append worker binary source path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -102,8 +103,8 @@ def generate_hmac(str_to_sign, secret):
     Returns:
         signed_message : string, the signed str_to_sign
     """
-    message = bytes(str_to_sign).encode('utf-8')
-    secret = bytes(secret).encode('utf-8')
+    message = str_to_sign.encode('utf-8')
+    secret = secret.encode('utf-8')
     cmd = ['echo -n "' + str(message) + '" | openssl dgst -sha256 -binary -hmac "' + str(secret) + '"']
     process, signed_message, error = linuxutil.popen_communicate(cmd, shell=True)
 
@@ -113,28 +114,9 @@ def generate_hmac(str_to_sign, secret):
     return signed_message
 
 
-def get_machine_id():
-    """Gets the machine id using dmidecode.
-
-    Returns:
-        machine_id : string, the machine id
-    """
-    cmd = ["dmidecode"]
-    process, dmidecode_output, error = linuxutil.popen_communicate(cmd)
-    if process.returncode != 0:
-        raise Exception("Unable get host UUID. " + str(error))
-
-    uuids = re.findall("[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}", dmidecode_output.lower())
-    if len(uuids) < 1:
-        raise Exception("Unable to extract machine id from dmidecode.")
-
-    machine_id = uuids[0]
-    print "Machine id : " + str(machine_id)
-    return machine_id
-
-
 def create_worker_configuration_file(jrds_uri, automation_account_id, worker_group_name, machine_id,
-                                     working_directory_path, state_directory_path, cert_path, key_path, test_mode):
+                                     working_directory_path, state_directory_path, cert_path, key_path,
+                                     registration_endpoint, workspace_id, test_mode):
     """Creates the automation hybrid worker configuration file.
 
     Args:
@@ -146,6 +128,8 @@ def create_worker_configuration_file(jrds_uri, automation_account_id, worker_gro
         state_directory_path    : string, the state directory path
         cert_path               : string, the the certificate path
         key_path                : string, the key path
+        registration_endpoint   : string, the registration endpoint
+        workspace_id            : string, the workspace id
         test_mode               : bool  , test mode
 
     Note:
@@ -178,8 +162,33 @@ def create_worker_configuration_file(jrds_uri, automation_account_id, worker_gro
         config.set(section, "bypass_certificate_verification", True)
         config.set(section, "debug_traces", True)
 
+    section = "registration-metadata"
+    if not config.has_section(section):
+        config.add_section(section)
+    config.set(section, "registration_endpoint", registration_endpoint)
+    config.set(section, "workspace_id", workspace_id)
+
     config.write(conf_file)
     conf_file.close()
+
+
+def get_autoregistered_worker_account_id():
+    autoregistered_worker_conf_path = "/var/opt/microsoft/omsagent/state/automationworker/worker.conf"
+    config = ConfigParser.ConfigParser()
+    if os.path.isfile(autoregistered_worker_conf_path) is False:
+        return None
+
+    config.read(autoregistered_worker_conf_path)
+    account_id = config.get("worker-required", "account_id")
+    print "Found existing worker for account id : " + str(account_id)
+    return account_id
+
+
+def extract_account_id_from_registration_endpoint(registration_endpoint):
+    account_id = re.findall("[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}", registration_endpoint.lower())
+    if len(account_id) != 1:
+        raise Exception("Invalid registration endpoint format.")
+    return account_id[0]
 
 
 def register(options):
@@ -191,11 +200,30 @@ def register(options):
     registration_endpoint = options.registration_endpoint
     automation_account_key = options.automation_account_key
     hybrid_worker_group_name = options.hybrid_worker_group_name
-    diy_state_base_path = "/var/opt/microsoft/omsagent/state/automationworker/diy/"
-    diy_working_directory_base_path = "/var/opt/microsoft/omsagent/run/automationworker/diy/"
+    workspace_id = options.workspace_id
+
+    # assert workspace exists on the box
+    state_base_path = "/var/opt/microsoft/omsagent/" + workspace_id + "/state/"
+    working_directory_base_path = "/var/opt/microsoft/omsagent/" + workspace_id + "/run/"
+    if os.path.exists(state_base_path) is False or os.path.exists(working_directory_base_path) is False:
+        raise Exception("Invalid workspace id. Is the specified workspace id registered as the OMSAgent "
+                        "primary worksapce?")
+
+    diy_account_id = extract_account_id_from_registration_endpoint(registration_endpoint)
+    if get_autoregistered_worker_account_id() != diy_account_id:
+        raise Exception("Cannot register, conflicting worker already registered.")
+
+    diy_state_base_path = os.path.join(state_base_path, os.path.join("automationworker","diy"))
+    diy_working_directory_base_path = os.path.join(working_directory_base_path, os.path.join("automationworker","diy"))
+    worker_conf_path = os.path.join(diy_state_base_path, "worker.conf")
+
+    if os.path.isfile(worker_conf_path) is True:
+        raise Exception("Unable to register, an existing worker was found. Please deregister any exiting worker and "
+                        "try again.")
+
     certificate_path = os.path.join(diy_state_base_path, "worker_diy.crt")
     key_path = os.path.join(diy_state_base_path, "worker_diy.key")
-    machine_id = get_machine_id()
+    machine_id = linuxutil.generate_uuid()
 
     # generate state path (certs/conf will be dropped in this path)
     if os.path.isdir(diy_state_base_path) is False:
@@ -229,16 +257,15 @@ def register(options):
     url = registration_endpoint + "/HybridV2(MachineId='" + machine_id + "')"
     response = http_client.put(url, headers=headers, data=payload)
 
-    if response.status_code is not 200:
-        print str(payload)
-        print str(url)
+    if response.status_code != 200:
         raise Exception("Failed to register worker. [response_status=" + str(response.status_code) + "]")
 
     registration_response = json.loads(response.raw_data)
-    create_worker_configuration_file(registration_response["jobRuntimeDataServiceUri"],
-                                     registration_response["AccountId"], hybrid_worker_group_name, machine_id,
-                                     diy_working_directory_base_path, diy_state_base_path, certificate_path, key_path,
-                                     False)
+    account_id = registration_response["AccountId"]
+    create_worker_configuration_file(registration_response["jobRuntimeDataServiceUri"], account_id,
+                                     hybrid_worker_group_name, machine_id, diy_working_directory_base_path,
+                                     diy_state_base_path, certificate_path, key_path, registration_endpoint,
+                                     workspace_id, False)
 
     # generate working directory path
     if os.path.isdir(diy_working_directory_base_path) is False:
@@ -252,6 +279,89 @@ def register(options):
     set_permission_recursive(permission="770", path=diy_working_directory_base_path)
 
     print "Registration successful!"
+
+
+def deregister(options):
+    registration_endpoint = options.registration_endpoint
+    automation_account_key = options.automation_account_key
+    workspace_id = options.workspace_id
+
+    # assert workspace exists on the box
+    state_base_path = "/var/opt/microsoft/omsagent/" + workspace_id + "/state/"
+    working_directory_base_path = "/var/opt/microsoft/omsagent/" + workspace_id + "/run/"
+    if os.path.exists(state_base_path) is False or os.path.exists(working_directory_base_path) is False:
+        raise Exception("Invalid workspace id. Is the specified workspace id registered as the OMSAgent "
+                        "primary worksapce?")
+
+    diy_state_base_path = os.path.join(state_base_path, os.path.join("automationworker", "diy"))
+    diy_working_directory_base_path = os.path.join(working_directory_base_path, os.path.join("automationworker", "diy"))
+    worker_conf_path = os.path.join(diy_state_base_path, "worker.conf")
+    certificate_path = os.path.join(diy_state_base_path, "worker_diy.crt")
+    key_path = os.path.join(diy_state_base_path, "worker_diy.key")
+
+    if os.path.exists(worker_conf_path) is False:
+        raise Exception("Unable to deregister, no worker configuration found on disk.")
+
+    if os.path.exists(certificate_path) is False or os.path.exists(key_path) is False:
+        raise Exception("Unable to deregister, no worker certificate/key found on disk.")
+
+    issuer, subject, thumbprint = linuxutil.get_cert_info(certificate_path)
+
+    if os.path.exists(worker_conf_path) is False:
+        raise Exception("Missing worker configuration.")
+
+    if os.path.exists(certificate_path) is False:
+        raise Exception("Missing worker certificate.")
+
+    if os.path.exists(key_path) is False:
+        raise Exception("Missing worker key.")
+
+    config = ConfigParser.ConfigParser()
+    config.read(worker_conf_path)
+    machine_id = config.get("worker-required", "machine_id")
+
+    # generate payload for registration request
+    date = datetime.datetime.utcnow().isoformat() + "0-00:00"
+    payload = {"Thumbprint": thumbprint,
+               "Issuer": issuer,
+               "Subject": subject}
+
+    # the signature generation is based on agent service contract
+    payload_hash = sha256_digest(payload)
+    b64encoded_payload_hash = base64.b64encode(payload_hash)
+    signature = generate_hmac(b64encoded_payload_hash + "\n" + date, automation_account_key)
+    b64encoded_signature = base64.b64encode(signature)
+
+    headers = {'Authorization': 'Shared ' + b64encoded_signature,
+               'ProtocolVersion': "2.0",
+               'x-ms-date': date,
+               "Content-Type": "application/json"}
+
+    # agent service registration request
+    http_client_factory = httpclientfactory.HttpClientFactory(certificate_path, key_path, options.test)
+    http_client = http_client_factory.create_http_client(sys.version_info)
+    url = registration_endpoint + "/Hybrid(MachineId='" + machine_id + "')"
+    response = http_client.delete(url, headers=headers, data=payload)
+
+    if response.status_code != 200:
+        raise Exception("Failed to deregister worker. [response_status=" + str(response.status_code) + "]")
+    if response.status_code == 404:
+        raise Exception("Unable to deregister. Worker not found.")
+    print "Successfuly deregistered worker."
+
+    print "Cleaning up left over directories."
+
+    try:
+        shutil.rmtree(diy_state_base_path)
+        print "Removed state directory."
+    except:
+        raise Exception("Unable to remove state directory base path.")
+
+    try:
+        shutil.rmtree(diy_working_directory_base_path)
+        print "Removed working directory."
+    except:
+        raise Exception("Unable to remove working directory base path.")
 
 
 def environment_prerequisite_validation():
@@ -281,15 +391,10 @@ def environment_prerequisite_validation():
 def get_options_and_arguments():
     parser = OptionParser(usage="usage: %prog -e endpoint -k key -g groupname",
                           version="%prog " + str(configuration.get_worker_version()))
-    parser.add_option("-e", "--endpoint",
-                      dest="registration_endpoint",
-                      help="Agent service registration endpoint.")
-    parser.add_option("-k", "--key",
-                      dest="automation_account_key",
-                      help="Automation account primary/secondary key.")
-    parser.add_option("-g", "--groupname",
-                      dest="hybrid_worker_group_name",
-                      help="Hybrid worker group name.")
+    parser.add_option("-e", "--endpoint", dest="registration_endpoint", help="Agent service registration endpoint.")
+    parser.add_option("-k", "--key", dest="automation_account_key", help="Automation account primary/secondary key.")
+    parser.add_option("-g", "--groupname",dest="hybrid_worker_group_name", help="Hybrid worker group name.")
+    parser.add_option("-w", "--workspaceid", dest="workspace_id", help="Workspace id.")
     parser.add_option("-r", "--register", action="store_true", dest="register", default=False)
     parser.add_option("-d", "--deregister", action="store_true", dest="deregister", default=False)
     parser.add_option("-t", "--test", action="store_true", dest="test", default=False)
@@ -301,10 +406,17 @@ def get_options_and_arguments():
     # --register requirement
     if options.register is True and (options.registration_endpoint is not None
                                      and options.automation_account_key is not None
-                                     and options.hybrid_worker_group_name is not None) is False:
+                                     and options.hybrid_worker_group_name is not None
+                                     and options.workspace_id is not None) is False:
         parser.print_help()
         sys.exit(-1)
-
+    # --deregister requirement
+    if options.deregister is True and (options.registration_endpoint is not None
+                                       and options.automation_account_key is not None
+                                       and options.hybrid_worker_group_name is not None
+                                       and options.workspace_id is not None) is False:
+        parser.print_help()
+        sys.exit(-1)
     return options, args
 
 
@@ -314,6 +426,8 @@ def main():
 
     if options.register is True:
         register(options)
+    elif options.deregister is True:
+        deregister(options)
 
 
 if __name__ == "__main__":

@@ -247,6 +247,14 @@ class Worker:
                                                platform.python_compiler())
             tracer.log_worker_system_telemetry(platform.system(), platform.node(), platform.version(),
                                                platform.machine(), platform.processor())
+            tracer.log_worker_user_telemetry(linuxutil.get_current_username())
+
+            try:
+                distributor_id, description, release, codename = linuxutil.get_lsb_release()
+                tracer.log_worker_lsb_release_telemetry(distributor_id, description, release, codename)
+            except:
+                pass
+
             # sleep for 6 hours, this allows us to gather daily telemetry
             time.sleep(60 * 60 * 6)
 

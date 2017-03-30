@@ -3,6 +3,7 @@
 # Copyright (C) Microsoft Corporation, All rights reserved.
 
 import os
+import random
 import subprocess
 import sys
 
@@ -24,7 +25,7 @@ PS_FJH_HEADER = ["UID", "PID", "PPID", "PGID", "SID", "C", "STIME", "TTY", "TIME
 
 def posix_only(func):
     """Decorator to prevent linux specific methods to run on other OS."""
-    if os.name.lower() != "posix":
+    if is_posix_host() is False:
         print func.__name__ + " isn't supported on " + str(os.name) + " os."
         return bypass
     else:
@@ -56,6 +57,28 @@ def format_process_entries_to_list(process_list):
         process = ProcessModel(sanitized_entry)
         formatted_entries.append(process)
     return formatted_entries
+
+
+def is_posix_host():
+    """Returns the True if the host is posix else False.
+
+    Returns:
+        bool, True if the host is posix else False.
+    """
+    return os.name.lower() == "posix"
+
+
+def generate_uuid():
+    """ UUID module isn't available in python 2.4. Since activity id are only required for tracing this is enough.
+
+    Returns: string, an activity id which has a GUID format
+    """
+    uuid = [random.randint(10000000, 99999999),
+            random.randint(1000, 9999),
+            random.randint(1000, 9999),
+            random.randint(1000, 9999),
+            random.randint(100000000000, 999999999999)]
+    return '-'.join(map(str, uuid))
 
 
 @posix_only
@@ -111,6 +134,26 @@ def get_current_user_processes():
         raise Exception("Unable to get processes : " + str(error))
     formatted_entries = format_process_entries_to_list(output.split("\n"))
     return formatted_entries
+
+
+@posix_only
+def get_lsb_release():
+    """Gets the os info through lsb_release.
+
+    Returns:
+        (distributor_id, description, release, codename)
+    """
+    proc = subprocess.Popen(["lsb_release", "-i", "-d", "-r", "-c"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output, error = proc.communicate()
+    if proc.poll() != 0:
+        raise Exception("Unable to get lsb_release info. Error : " + str(error))
+
+    formatted_output = [entry.split("\t") for entry in output.strip().split("\n")]
+    distributor_id = formatted_output[0][1]
+    description = formatted_output[1][1]
+    release = formatted_output[2][1]
+    codename = formatted_output[3][1]
+    return distributor_id, description, release, codename
 
 
 @posix_only
