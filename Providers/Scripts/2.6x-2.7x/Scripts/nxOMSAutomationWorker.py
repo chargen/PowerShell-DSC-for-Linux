@@ -148,31 +148,33 @@ def Test_Marshall(ResourceSettings):
     :param ResourceSettings:
     :return: [0] if all tests pass [-1] otherwise
     """
-    settings = read_settings_from_mof_json(ResourceSettings)
-    if not is_oms_primary_workspace(settings.workspace_id):
-        # not primary workspace
-        # return unconditional [0] for a NOOP on non-primary workspace
-        log(DEBUG, "Test_Marshall skipped: non primary workspace. Test_Marshall returned [0]")
-        return [0]
-    if get_stray_worker_and_manager_wsids(get_nxautomation_ps_output(), settings.workspace_id):
-        log(INFO, "Test_Marshall returned [-1]: process started by other workspaces detected")
+    try:
+        settings = read_settings_from_mof_json(ResourceSettings)
+        if not is_oms_primary_workspace(settings.workspace_id):
+            # not primary workspace
+            # return unconditional [0] for a NOOP on non-primary workspace
+            log(DEBUG, "Test_Marshall skipped: non primary workspace. Test_Marshall returned [0]")
+            return [0]
+        if get_stray_worker_and_manager_wsids(get_nxautomation_ps_output(), settings.workspace_id):
+            log(INFO, "Test_Marshall returned [-1]: process started by other workspaces detected")
+            return [-1]
+        if not os.path.isfile(OMS_CONF_FILE_PATH):
+            log(INFO, "Test_Marshall returned [-1]: oms.conf file not found")
+            return [-1]
+        if (settings.updates_enabled or settings.diy_enabled ) and not is_worker_manager_running_latest_version(settings.workspace_id):
+            # Either the worker manager is not running, or its not latest
+            log(INFO, "Test_Marshall returned [-1]: worker manager isn't running or is not latest")
+            return [-1]
+        if not settings.updates_enabled and not settings.diy_enabled and is_hybrid_worker_or_manager_running(settings.workspace_id):
+            log(INFO, "Test_Marshall returned [-1]: worker or manager is running when no solution is enabled")
+            return [-1]
+        if not is_oms_config_consistent_with_mof(settings.updates_enabled, settings.diy_enabled):
+            # Current oms.conf is inconsistent with the mof
+            log(INFO, "Test_Marshall returned [-1]: oms.conf differs from configuration mof")
+            return [-1]
+    except Exception, e:
+        log(INFO, "Test_Marshall returned [-1]: %s" % e.message)
         return [-1]
-    if not os.path.isfile(OMS_CONF_FILE_PATH):
-        log(INFO, "Test_Marshall returned [-1]: oms.conf file not found")
-        return [-1]
-    if (settings.updates_enabled or settings.diy_enabled ) and not is_worker_manager_running_latest_version(settings.workspace_id):
-        # Either the worker manager is not running, or its not latest
-        log(INFO, "Test_Marshall returned [-1]: worker manager isn't running or is not latest")
-        return [-1]
-    if not settings.updates_enabled and not settings.diy_enabled and is_hybrid_worker_or_manager_running(settings.workspace_id):
-        log(INFO, "Test_Marshall returned [-1]: worker or manager is running when no solution is enabled")
-        return [-1]
-    if not is_oms_config_consistent_with_mof(settings.updates_enabled, settings.diy_enabled):
-        # Current oms.conf is inconsistent with the mof
-        log(INFO, "Test_Marshall returned [-1]: oms.conf differs from configuration mof")
-        return [-1]
-
-
     # All went well
     log(DEBUG, "Test_Marshall returned [0]")
     return [0]
@@ -301,7 +303,7 @@ def is_hybrid_worker_or_manager_running(workspace_id):
     search_expression = WORKSPACE_ID_PREFIX + workspace_id
     result, retcode = run_pgrep_command(search_expression)
     if result and retcode == 0:
-        log(DEBUG, "Hybrid worker and manager processes detected: %s", result)
+        log(DEBUG, "Hybrid worker and manager processes detected: %s" % result)
         return True
     else:
         log(DEBUG, "No hybrid worker or manager processes found")
