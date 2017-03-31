@@ -411,7 +411,7 @@ def is_any_1_3_process_running(processes, workspace_id):
     for ps in processes:
         if ps:
             version = ps.split(" ")[-1]
-            if WORKER_MANAGER_START_PATH in ps and workspace_id in ps and version == 1.3:
+            if WORKER_MANAGER_START_PATH in ps and workspace_id in ps and version == "1.3":
                 return True
     return False
 
