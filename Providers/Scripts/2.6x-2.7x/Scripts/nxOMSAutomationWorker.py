@@ -14,7 +14,6 @@ import pwd
 import re
 
 import imp
-
 protocol = imp.load_source('protocol', '../protocol.py')
 nxDSCLog = imp.load_source('nxDSCLog', '../nxDSCLog.py')
 try:
@@ -37,8 +36,16 @@ def Set_Marshall(ResourceSettings):
         if os.path.isfile(STATE_CONF_FILE_PATH):
             os.remove(STATE_CONF_FILE_PATH)
 
+        # if an update is required from 1.3
+        if is_any_1_3_process_running(get_nxautomation_ps_output(), settings.workspace_id):
+            kill_process_by_pattern_string(settings.workspace_id)            
+
         # Kill worker managers that might already be running
         kill_worker_manager(settings.workspace_id)
+
+        # Kill all stray processes
+        for ws_id in get_stray_worker_and_manager_wsids(get_nxautomation_ps_output(), settings.workspace_id):
+            kill_process_by_pattern_string(WORKSPACE_ID_PREFIX + ws_id)
 
         # Set up conf and working directories if it doesn't exit
         if not os.path.isdir(WORKER_STATE_DIR):
@@ -136,7 +143,9 @@ def Test_Marshall(ResourceSettings):
         # return unconditional [0] for a NOOP on non-primary workspace
         log(DEBUG, "Test_Marshall skipped: non primary workspace. Test_Marshall returned [0]")
         return [0]
-
+    if get_stray_worker_and_manager_wsids(get_nxautomation_ps_output(), settings.workspace_id):
+        log(INFO, "Test_Marshall returned [-1]: process(es) started by other workspaces detected")
+        return [-1]
     if not os.path.isfile(OMS_CONF_FILE_PATH):
         log(INFO, "Test_Marshall returned [-1]: oms.conf file not found")
         return [-1]
@@ -398,26 +407,32 @@ def start_worker_manager_process(workspace_id):
     return -1
 
 
+def is_any_1_3_process_running(processes, workspace_id):
+    for ps in processes:
+        if ps:
+            version = ps.split(" ")[-1]
+            if WORKER_MANAGER_START_PATH in ps and workspace_id in ps and version == 1.3:
+                return True
+    return False
+
+
 def get_worker_manager_pid_and_version(workspace_id, throw_error_on_multiple_found = True):
     """
     Returns the PID of the worker manager
     :return: pid of the worker manager, -1 if it isn't running
     """
-    error, proc, processes = get_automationuser_processes()
-    if proc.returncode != 0 or error:
-        log(INFO, "Failed to detect instance of worker manager")
-        return -1, "0.0"
+    processes = get_nxautomation_ps_output()
     manager_processes_found = 0
     pid = -1
     version = "0.0"
     for process_line in processes:
         if process_line:
             # make sure process_line is not null or empty
-            split_line = process_line.strip().split(" ")
+            split_line = process_line.split(" ")
             args = " ".join(split_line[1:])
             if WORKER_MANAGER_START_PATH in args and workspace_id in args:
                 pid = int(split_line[0])
-                version = split_line[-1].strip()
+                version = split_line[-1]
                 manager_processes_found += 1
                 if throw_error_on_multiple_found and manager_processes_found > 1:
                     raise AssertionError("More than one manager processes found")
@@ -436,7 +451,7 @@ class Filter:
 
 
 
-def get_automationuser_processes():
+def get_nxautomation_ps_output():
     if 'COLUMNS' in os.environ:
         os.environ['COLUMNS'] = "3000"
     else:
@@ -444,12 +459,17 @@ def get_automationuser_processes():
     proc = subprocess.Popen(["ps", "-u", AUTOMATION_USER, "-o", "pid=", "-o", "args="], stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     command, error = proc.communicate()
+
+    if proc.returncode != 0 or error:
+        log(INFO, "Failed to read nxautomation user processes")
+        return []
+
     command = command.strip()
     if command:
         processes = [x.strip() for x in command.split('\n')]
     else:
         processes = []
-    return error, proc, processes
+    return processes
 
 def is_worker_manager_running_latest_version(workspace_id):
     try:
@@ -462,13 +482,12 @@ def is_worker_manager_running_latest_version(workspace_id):
     log(DEBUG, "latest available version is: " + available_version)
     return pid > 0 and running_version == available_version
 
-
 def kill_stray_processes(workspace_id):
-    error, proc, processes = get_automationuser_processes()
-    for wrkspc_id in get_stray_worker_and_manager_pids(processes, workspace_id):
+    processes = get_nxautomation_ps_output()
+    for wrkspc_id in get_stray_worker_and_manager_wsids(processes, workspace_id):
         kill_process_by_pattern_string(wrkspc_id)
 
-def get_stray_worker_and_manager_pids(processes, workspace_id):
+def get_stray_worker_and_manager_wsids(processes, workspace_id):
     """
     Gets the pids of the workers and that are running in the context of another user
     :param workspace_id:
