@@ -14,6 +14,7 @@ import pwd
 import re
 
 import imp
+
 protocol = imp.load_source('protocol', '../protocol.py')
 nxDSCLog = imp.load_source('nxDSCLog', '../nxDSCLog.py')
 try:
@@ -171,6 +172,8 @@ def Get_Marshall(ResourceSettings):
 # ###########################################################
 # Begin user defined DSC functions
 # ###########################################################
+WORKSPACE_ID_PREFIX = "rworkspace:"
+
 ERROR = logging.ERROR
 DEBUG = logging.DEBUG
 INFO = logging.INFO
@@ -223,8 +226,6 @@ AUTOMATION_USER = "nxautomation"
 
 LOCAL_LOG_LOCATION = "/var/opt/microsoft/omsagent/log/nxOMSAutomationWorker.log"
 LOG_LOCALLY = False
-
-########### User defined functions ###########
 
 
 def get_diy_account_id():
@@ -384,7 +385,7 @@ def start_worker_manager_process(workspace_id):
     :return: the pid of the worker manager process
     """
     proc = subprocess.Popen(["sudo", "-u", AUTOMATION_USER, "python", WORKER_MANAGER_START_PATH, OMS_CONF_FILE_PATH,
-                             "rworkspace:" + workspace_id, get_module_version()])
+                             WORKSPACE_ID_PREFIX + workspace_id, get_module_version()])
     for i in range(0, 5):
         time.sleep(3)
         pid = get_worker_manager_pid_and_version(workspace_id, throw_error_on_multiple_found=False)[0]
@@ -483,7 +484,7 @@ def kill_worker_manager(workspace_id):
     Exceptions:
         throws exception if process was running and could not be killed
     """
-    pattern_match_string = "python\s.*main\.py.*\s%s\s" %workspace_id
+    pattern_match_string = "python\s.*main\.py.*%s%s\s" % ( WORKSPACE_ID_PREFIX, workspace_id)
 
     kill_process_by_pattern_string(pattern_match_string)
     # can't depend on the return value to ensure that the process was killed since it pattern matches
