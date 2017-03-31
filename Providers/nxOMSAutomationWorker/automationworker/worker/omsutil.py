@@ -11,9 +11,9 @@ import grp
 # append worker binary source path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from worker import configuration
-from worker import serializerfactory
-from worker import linuxutil
+import configuration
+import serializerfactory
+import linuxutil
 
 json = serializerfactory.get_serializer(sys.version_info)
 configuration.clear_config()
