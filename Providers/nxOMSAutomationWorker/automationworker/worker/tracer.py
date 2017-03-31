@@ -349,7 +349,7 @@ def log_worker_sandbox_process_crashed(sandbox_id, pid, exit_code, exception):
 def log_worker_failed_to_create_sandbox_root_folder(sandbox_id, exception):
     message = "Failed to create sandbox root folder. [sandboxId=" + str(sandbox_id) + "][exception=" + \
               str(exception) + "]"
-    trace_generic_hybrid_worker_event(5105, inspect.stack()[0][3], message, 1, KEYWORD_ERROR)
+    trace_generic_hybrid_worker_event(5105, inspect.stack()[0][3], message, 1, KEYWORD_WARNING)
 
 
 def log_worker_started_tracking_sandbox(sandbox_id):

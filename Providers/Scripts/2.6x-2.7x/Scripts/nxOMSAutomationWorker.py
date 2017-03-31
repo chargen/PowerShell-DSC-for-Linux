@@ -63,9 +63,15 @@ def Set_Marshall(ResourceSettings):
         if os.stat(WORKER_STATE_DIR).st_mode & PERMISSION_LEVEL_0777 != PERMISSION_LEVEL_0770:
             # bitwise AND with PERMISSION_LEVEL_0777 will give true permission level
             os.chmod(WORKER_STATE_DIR, PERMISSION_LEVEL_0770)
+
+        proc = subprocess.Popen(["sudo", "-u", AUTOMATION_USER, "python", OMS_UTIL_FILE_PATH, "--initialize"])
+        if proc.wait() != 0:
+            raise Exception("call to omsutil.py --initialize failed")
+
     except Exception, e:
         log(ERROR, "Set_Marshall returned [-1] with following error %s" % e.message)
         return [-1]
+
 
     try:
         # Create the configuration object
@@ -120,7 +126,11 @@ def Set_Marshall(ResourceSettings):
         if (settings.updates_enabled or settings.diy_enabled) and start_worker_manager_process(settings.workspace_id) < 0:
             log(ERROR, "Worker manager process could not be started. Set_Marshall returned [-1]")
             return [-1]
-
+        elif not settings.updates_enabled and not settings.diy_enabled:
+            ## Kill all workers and managers
+            kill_process_by_pattern_string(WORKSPACE_ID_PREFIX + settings.workspace_id)
+            if is_hybrid_worker_or_manager_running(settings.workspace_id):
+                raise Exception("Could not kill worker and manager processes")
         log(INFO, "Set_Marshall returned [0]. Exited successfully")
         return [0]
 
@@ -150,12 +160,12 @@ def Test_Marshall(ResourceSettings):
     if not os.path.isfile(OMS_CONF_FILE_PATH):
         log(INFO, "Test_Marshall returned [-1]: oms.conf file not found")
         return [-1]
-    if (settings.updates_enabled or settings.diy_enabled ) and is_worker_manager_running_latest_version(settings.workspace_id) is False:
+    if (settings.updates_enabled or settings.diy_enabled ) and not is_worker_manager_running_latest_version(settings.workspace_id):
         # Either the worker manager is not running, or its not latest
         log(INFO, "Test_Marshall returned [-1]: worker manager isn't running or is not latest")
         return [-1]
-    if not settings.updates_enabled and not settings.diy_enabled and get_worker_manager_pid_and_version(settings.workspace_id, False)[0] > 0:
-        log(INFO, "Test_Marshall returned [-1]: worker manager is running when no solution is enabled")
+    if not settings.updates_enabled and not settings.diy_enabled and is_hybrid_worker_or_manager_running(settings.workspace_id):
+        log(INFO, "Test_Marshall returned [-1]: worker or manager is running when no solution is enabled")
         return [-1]
     if not is_oms_config_consistent_with_mof(settings.updates_enabled, settings.diy_enabled):
         # Current oms.conf is inconsistent with the mof
@@ -224,7 +234,8 @@ PROXY_CONF_PATH_NEW="/etc/opt/microsoft/omsagent/proxy.conf"
 REGISTRATION_FILE_PATH = "/opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/scripts/register_oms.py"
 OMS_CERTIFICATE_PATH = "/etc/opt/microsoft/omsagent/certs/oms.crt"
 OMS_CERT_KEY_PATH = "/etc/opt/microsoft/omsagent/certs/oms.key"
-KEYRING_PATH="/etc/opt/omi/conf/omsconfig/keyring.gpg"
+KEYRING_PATH ="/etc/opt/omi/conf/omsconfig/keyring.gpg"
+OMS_UTIL_FILE_PATH = "/opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/scripts/omsutil.py"
 
 # permission level rwx rwx ---
 # leading zero is necessary because this is an octal number
@@ -285,6 +296,16 @@ def read_settings_from_mof_json(json_serialized_string):
         log(ERROR, "Json parameters deserialization Error: " + Exception.message)
         raise e
 
+
+def is_hybrid_worker_or_manager_running(workspace_id):
+    search_expression = WORKSPACE_ID_PREFIX + workspace_id
+    result, retcode = run_pgrep_command(search_expression)
+    if result and retcode == 0:
+        log(DEBUG, "Hybrid worker and manager processes detected: %s", result)
+        return True
+    else:
+        log(DEBUG, "No hybrid worker or manager processes found")
+        return False
 
 def is_oms_config_consistent_with_mof(updates_enabled, diy_enabled, oms_conf_file_path = OMS_CONF_FILE_PATH):
     if not os.path.isfile(oms_conf_file_path):
@@ -517,14 +538,19 @@ def kill_worker_manager(workspace_id):
 
 def kill_process_by_pattern_string(pattern_match_string):
     # ---- section for debugging
+    result, retcode = run_pgrep_command(pattern_match_string)
+    log(DEBUG, "The following worker processes will be terminated: %s" % result)
+    # ---- end section
+    subprocess.call(["sudo", "pkill", "-u", AUTOMATION_USER, "-f", pattern_match_string])
+
+
+def run_pgrep_command(pattern_match_string):
     proc = subprocess.Popen(["pgrep", "-u", AUTOMATION_USER, "-f", pattern_match_string], stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     result, error = proc.communicate()
     result = str(result)
     result = result.replace('\n', ' ')
-    log(DEBUG, "The following worker processes will be terminated: %s" % result)
-    # ---- end section
-    subprocess.call(["sudo", "pkill", "-u", AUTOMATION_USER, "-f", pattern_match_string])
+    return result, proc.returncode
 
 
 def get_module_version():

@@ -289,38 +289,6 @@ def main():
     except KeyError:
         pass
 
-    # fix for nxautomation OMS integration
-    # add the nxautomation user to omsagent (omsagent-1.2.0-75.universal.x64.sh and older create the cert under omsagent:omsagent)
-    if os.name.lower() != "nt":
-        import pwd
-        import grp
-        nxautomation_username = "nxautomation"
-        omsagent_group_name = "omsagent"
-        try:
-            nxautomation_uid = int(pwd.getpwnam(nxautomation_username).pw_uid)
-            if os.getuid() == nxautomation_uid:
-                omsagent_group = grp.getgrnam(omsagent_group_name)
-                if nxautomation_username not in omsagent_group.gr_mem:
-                    proc = subprocess.Popen(
-                        ["sudo", "/usr/sbin/usermod", "-g", "nxautomation", "-a", "-G", "omsagent,omiusers",
-                         "nxautomation"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    output, error = proc.communicate()
-                    if proc.returncode != 0:
-                        exit_on_error(str(error))
-                    # exiting to reflect group permission, proper permission will reflect for the process on the next execution
-                    sys.exit(3)
-
-                # change permissions for the keyring.gpg
-                proc = subprocess.Popen(["sudo", "chmod", "g+r", "/etc/opt/omi/conf/omsconfig/keyring.gpg"],
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                output, error = proc.communicate()
-                if proc.returncode != 0:
-                    exit_on_error(str(error))
-        except SystemExit:
-            raise
-        except:
-            pass
-
     configuration.read_and_set_configuration(configuration_path)
     configuration.set_config({configuration.COMPONENT: "worker"})
     validate_and_setup_path()
