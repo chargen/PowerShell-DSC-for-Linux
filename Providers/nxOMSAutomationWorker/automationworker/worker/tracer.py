@@ -16,7 +16,7 @@ import traceback
 import configuration
 from httpclientfactory import HttpClientFactory
 from jrdsclient import JRDSClient
-import linuxutil
+import util
 
 jrds_client = None
 jrds_cert_path = None
@@ -27,7 +27,6 @@ account_id = None
 machine_id = None
 hybrid_worker_group_name = None
 worker_version = None
-activity_id = None
 sandbox_id = None
 
 default_logger = None
@@ -77,7 +76,6 @@ def init():
     machine_id = configuration.get_machine_id()
     hybrid_worker_group_name = configuration.get_hybrid_worker_name()
     worker_version = configuration.get_worker_version()
-    activity_id = generate_activity_id()
 
     sandbox_id = None
     try:
@@ -249,7 +247,7 @@ def dict_to_str(input_dict):
     return output_str
 
 
-u_activity_id = linuxutil.generate_uuid()
+u_activity_id = util.generate_uuid()
 
 COMPONENT_SANDBOX = "Sandbox"
 COMPONENT_WORKER = "Worker"

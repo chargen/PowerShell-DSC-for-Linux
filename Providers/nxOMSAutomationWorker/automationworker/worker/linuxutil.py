@@ -21,7 +21,9 @@ except:
     pass
 
 PS_FJH_HEADER = ["UID", "PID", "PPID", "PGID", "SID", "C", "STIME", "TTY", "TIME", "CMD"]
-
+PY_MAJOR_VERSION = 0
+PY_MINOR_VERSION = 1
+PY_MICRO_VERSION = 2
 
 def posix_only(func):
     """Decorator to prevent linux specific methods to run on other OS."""
@@ -68,17 +70,17 @@ def is_posix_host():
     return os.name.lower() == "posix"
 
 
+@posix_only
 def generate_uuid():
     """ UUID module isn't available in python 2.4. Since activity id are only required for tracing this is enough.
 
     Returns: string, an activity id which has a GUID format
     """
-    uuid = [random.randint(10000000, 99999999),
-            random.randint(1000, 9999),
-            random.randint(1000, 9999),
-            random.randint(1000, 9999),
-            random.randint(100000000000, 999999999999)]
-    return '-'.join(map(str, uuid))
+    proc = subprocess.Popen(["cat", "/proc/sys/kernel/random/uuid"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    uuid, error = proc.communicate()
+    if proc.poll() != 0:
+        raise Exception("Unable to get uuid from /proc/sys/kernel/random/uuid : " + str(error))
+    return uuid.strip()
 
 
 @posix_only

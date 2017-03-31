@@ -19,6 +19,7 @@ from worker import configuration
 from worker import httpclientfactory
 from worker import linuxutil
 from worker import serializerfactory
+from worker import util
 
 json = serializerfactory.get_serializer(sys.version_info)
 configuration.clear_config()
@@ -223,7 +224,7 @@ def register(options):
 
     certificate_path = os.path.join(diy_state_base_path, "worker_diy.crt")
     key_path = os.path.join(diy_state_base_path, "worker_diy.key")
-    machine_id = linuxutil.generate_uuid()
+    machine_id = util.generate_uuid()
 
     # generate state path (certs/conf will be dropped in this path)
     if os.path.isdir(diy_state_base_path) is False:
