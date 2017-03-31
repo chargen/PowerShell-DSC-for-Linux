@@ -116,7 +116,7 @@ def Set_Marshall(ResourceSettings):
 
     try:
         # start the worker manager proc
-        if (settings.updates_enabled or settings.diy_enabled) and start_worker_manager_process(settings.workspace_id) < 0:
+        if start_worker_manager_process(settings.workspace_id) < 0:
             log(ERROR, "Worker manager process could not be started. Set_Marshall returned [-1]")
             return [-1]
 
@@ -152,9 +152,6 @@ def Test_Marshall(ResourceSettings):
     if (settings.updates_enabled or settings.diy_enabled ) and is_worker_manager_running_latest_version(settings.workspace_id) is False:
         # Either the worker manager is not running, or its not latest
         log(INFO, "Test_Marshall returned [-1]: worker manager isn't running or is not latest")
-        return [-1]
-    if not settings.updates_enabled and not settings.diy_enabled and get_worker_manager_pid_and_version(settings.workspace_id, False)[0] > 0:
-        log(INFO, "Test_Marshall returned [-1]: worker manager is running when no solution is enabled")
         return [-1]
     if not is_oms_config_consistent_with_mof(settings.updates_enabled, settings.diy_enabled):
         # Current oms.conf is inconsistent with the mof
