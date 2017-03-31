@@ -38,6 +38,7 @@ def Set_Marshall(ResourceSettings):
 
         # if an update is required from 1.3
         if is_any_1_3_process_running(get_nxautomation_ps_output(), settings.workspace_id):
+            log(DEBUG, "Hybrid worker 1.3 detected, attempting to kill")
             kill_process_by_pattern_string(settings.workspace_id)            
 
         # Kill worker managers that might already be running
