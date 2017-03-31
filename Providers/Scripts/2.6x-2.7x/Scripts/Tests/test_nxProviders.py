@@ -5072,6 +5072,18 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
         stray_processes = nxOMSAutomationWorker.get_stray_worker_and_manager_pids(processes1, self.workspace_id)
         self.assertTrue(stray_processes == set(['dfd4ef08-4011-428a-8947-0c2f4605980f', 'efd4ef08-4011-428a-8947-0c2f4605980f']))
 
+        processes2 = ['1000 python /opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/worker/hybridworker.py /var/opt/microsoft/omsagent/state/automationworker/worker.conf managed rworkspace:cfd4ef08-4011-428a-8947-0c2f4605980f rversion:1.4',
+                     '1001 python /opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/worker/hybridworker.py /var/opt/microsoft/omsagent/state/automationworker/worker.conf managed rworkspace:cfd4ef08-4011-428a-8947-0c2f4605980f rversion:1.4',
+                     '1002 python /opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/worker/main.py /var/opt/microsoft/omsagent/state/automationworker/oms.conf rworkspace:cfd4ef08-4011-428a-8947-0c2f4605980f 1.4',
+                     '1003 python /opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/worker/main.py /var/opt/microsoft/omsagent/state/automationworker/oms.conf rworkspace:cfd4ef08-4011-428a-8947-0c2f4605980f 1.4',
+                     '']
+        stray_processes = nxOMSAutomationWorker.get_stray_worker_and_manager_pids(processes2, self.workspace_id)
+        self.assertTrue(stray_processes == set([]))
+
+        processes3 = ['']
+        stray_processes = nxOMSAutomationWorker.get_stray_worker_and_manager_pids(processes3, self.workspace_id)
+        self.assertTrue(stray_processes == set([]))
+
 ######################################
 if __name__ == '__main__':
     s1=unittest2.TestLoader().loadTestsFromTestCase(nxUserTestCases)
