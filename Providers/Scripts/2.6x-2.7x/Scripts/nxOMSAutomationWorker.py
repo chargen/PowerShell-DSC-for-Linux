@@ -144,7 +144,7 @@ def Test_Marshall(ResourceSettings):
         log(DEBUG, "Test_Marshall skipped: non primary workspace. Test_Marshall returned [0]")
         return [0]
     if get_stray_worker_and_manager_wsids(get_nxautomation_ps_output(), settings.workspace_id):
-        log(INFO, "Test_Marshall returned [-1]: process(es) started by other workspaces detected")
+        log(INFO, "Test_Marshall returned [-1]: process started by other workspaces detected")
         return [-1]
     if not os.path.isfile(OMS_CONF_FILE_PATH):
         log(INFO, "Test_Marshall returned [-1]: oms.conf file not found")
@@ -521,7 +521,7 @@ def kill_process_by_pattern_string(pattern_match_string):
     result, error = proc.communicate()
     result = str(result)
     result = result.replace('\n', ' ')
-    log(DEBUG, "The following worker manager processes will be terminated: %s" % result)
+    log(DEBUG, "The following worker processes will be terminated: %s" % result)
     # ---- end section
     subprocess.call(["sudo", "pkill", "-u", AUTOMATION_USER, "-f", pattern_match_string])
 
