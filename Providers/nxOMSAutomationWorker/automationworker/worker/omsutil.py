@@ -7,10 +7,6 @@ import sys
 import os
 import pwd
 import grp
-
-# append worker binary source path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import configuration
 import serializerfactory
 import linuxutil
