@@ -4983,7 +4983,7 @@ class nxOMSAutomationWorkerTestCases(unittest2.TestCase):
         Setup Test resources
         """
         if not os.path.isdir(self.temp_run_dir):
-            os.mkdir(self.temp_run_dir, 0o777)
+            os.mkdir(self.temp_run_dir, 0777)
         # create nxautomation user on the machine
         self.create_nxautomation_user_and_group()
         subprocess.call(["sudo", "pkill", "-u", self.automation_user])
