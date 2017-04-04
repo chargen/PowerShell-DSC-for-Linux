@@ -11,16 +11,21 @@ import time
 import logging
 import logging.handlers
 import pwd
+import re
 
 import imp
+
 protocol = imp.load_source('protocol', '../protocol.py')
 nxDSCLog = imp.load_source('nxDSCLog', '../nxDSCLog.py')
 try:
-    serializerfactory = imp.load_source('serializerfactory', '../../modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/worker/serializerfactory.py')
+    serializerfactory = imp.load_source('serializerfactory',
+                                        '../../modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/worker/serializerfactory.py')
 except:
     # this is the path when running tests
-    serializerfactory = imp.load_source('serializerfactory', '../../nxOMSAutomationWorker/automationworker/worker/serializerfactory.py')
+    serializerfactory = imp.load_source('serializerfactory',
+                                        '../../nxOMSAutomationWorker/automationworker/worker/serializerfactory.py')
 LG = nxDSCLog.DSCLog
+
 
 def Set_Marshall(ResourceSettings):
     settings = read_settings_from_mof_json(ResourceSettings)
@@ -35,8 +40,21 @@ def Set_Marshall(ResourceSettings):
         if os.path.isfile(STATE_CONF_FILE_PATH):
             os.remove(STATE_CONF_FILE_PATH)
 
-        # Kill worker managers that might already be running
+        # if an update is required from 1.3
+        # major changes were moade in 1.4 that are incompatible with the 1.3 way of doing things
+        if is_any_1_3_process_running(get_nxautomation_ps_output(), settings.workspace_id):
+            log(DEBUG, "Hybrid worker 1.3 detected, attempting to kill")
+            kill_process_by_pattern_string(settings.workspace_id)
+
+            # Kill worker managers that might already be running
+        log(DEBUG, "Killing the instance of worker manager already running")
         kill_worker_manager(settings.workspace_id)
+
+        # Kill all stray processes
+        for ws_id in get_stray_worker_and_manager_wsids(get_nxautomation_ps_output(), settings.workspace_id):
+            log(DEBUG, "Workspace id %s has worker and manager processes running in improper context. Terminating."
+                % ws_id)
+            kill_process_by_pattern_string(WORKSPACE_ID_PREFIX + ws_id)
 
         # Set up conf and working directories if it doesn't exit
         if not os.path.isdir(WORKER_STATE_DIR):
@@ -54,47 +72,81 @@ def Set_Marshall(ResourceSettings):
             # bitwise AND with PERMISSION_LEVEL_0777 will give true permission level
             os.chmod(WORKER_STATE_DIR, PERMISSION_LEVEL_0770)
 
+        proc = subprocess.Popen(["sudo", "-u", AUTOMATION_USER, "python", OMS_UTIL_FILE_PATH, "--initialize"])
+        if proc.wait() != 0:
+            raise Exception("call to omsutil.py --initialize failed")
+
+    except Exception, e:
+        log(ERROR, "Set_Marshall returned [-1] with following error %s" % e.message)
+        return [-1]
+
+    try:
         # Create the configuration object
         write_omsconf_file(settings.workspace_id, settings.updates_enabled, settings.diy_enabled)
         os.chmod(OMS_CONF_FILE_PATH, PERMISSION_LEVEL_0770)
-
         log(DEBUG, "oms.conf file was written")
+    except Exception, e:
+        log(ERROR, "Set_Marshall returned [-1] with following error %s" % e.message)
+        return [-1]
 
-        # Write worker.conf file
-        oms_workspace_id, agent_id = read_oms_primary_workspace_config_file()
-        # If both proxy files exist use the new one
-        # If neither exist use the new path, path will have no file in it, but no file means no proxy set up
-        # If one of them exists, use that
-        proxy_conf_path = PROXY_CONF_PATH_NEW
-        if not os.path.isfile(PROXY_CONF_PATH_NEW) and os.path.isfile(PROXY_CONF_PATH_LEGACY):
-            proxy_conf_path = PROXY_CONF_PATH_LEGACY
-        args = ["python", REGISTRATION_FILE_PATH, "--register", "-w", settings.workspace_id, "-a", agent_id, "-c",
-                OMS_CERTIFICATE_PATH, "-k", OMS_CERT_KEY_PATH, "-f", WORKING_DIRECTORY_PATH, "-s", WORKER_STATE_DIR,
-                "-e", settings.azure_dns_agent_svc_zone, "-p", proxy_conf_path, "-g", KEYRING_PATH]
-        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = proc.communicate()
-        # log(DEBUG, "Trying to register Linux hybrid worker with args: %s" % str(args))
-        if proc.returncode != 0:
-            log(ERROR, "Linux Hybrid Worker registration failed: " + stderr + "\n" + stdout)
-            return [-1]
-        if not os.path.isfile(AUTO_REGISTERED_WORKER_CONF_PATH):
-            log(ERROR, "Linux Hybrid Worker registration file could not be created")
-            return [-1]
-        else:
-            os.chmod(AUTO_REGISTERED_WORKER_CONF_PATH, PERMISSION_LEVEL_0770)
+    try:
+        # register the auto worker if required
+        if settings.updates_enabled:
+            # Write worker.conf file
+            oms_workspace_id, agent_id = read_oms_primary_workspace_config_file()
+            # If both proxy files exist use the new one
+            # If neither exist use the new path, path will have no file in it, but no file means no proxy set up
+            # If one of them exists, use that
+            proxy_conf_path = PROXY_CONF_PATH_NEW
+            if not os.path.isfile(PROXY_CONF_PATH_NEW) and os.path.isfile(PROXY_CONF_PATH_LEGACY):
+                proxy_conf_path = PROXY_CONF_PATH_LEGACY
+            diy_account_id = get_diy_account_id()
+            if diy_account_id:
+                args = ["python", REGISTRATION_FILE_PATH, "--register", "-w", settings.workspace_id, "-a", agent_id,
+                        "-c",
+                        OMS_CERTIFICATE_PATH, "-k", OMS_CERT_KEY_PATH, "-f", WORKING_DIRECTORY_PATH, "-s",
+                        WORKER_STATE_DIR,
+                        "-e", settings.azure_dns_agent_svc_zone, "-p", proxy_conf_path, "-g", KEYRING_PATH, "-y",
+                        diy_account_id]
+            else:
+                args = ["python", REGISTRATION_FILE_PATH, "--register", "-w", settings.workspace_id, "-a", agent_id,
+                        "-c", OMS_CERTIFICATE_PATH, "-k", OMS_CERT_KEY_PATH, "-f", WORKING_DIRECTORY_PATH, "-s",
+                        WORKER_STATE_DIR, "-e", settings.azure_dns_agent_svc_zone, "-p", proxy_conf_path, "-g",
+                        KEYRING_PATH]
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, stderr = proc.communicate()
+            # log(DEBUG, "Trying to register Linux hybrid worker with args: %s" % str(args))
+            if proc.returncode != 0:
+                log(ERROR, "Linux Hybrid Worker registration failed: Return code %s :" % str(proc.returncode)
+                    + stderr + "\n" + stdout)
+                if proc.returncode == -5:
+                    log(ERROR, "Linux Hybrid Worker registration failed: DIY and auto-register agent ids do not match")
+                    log(INFO, "Worker manager with be started without auto registered worker")
+            elif not os.path.isfile(AUTO_REGISTERED_WORKER_CONF_PATH):
+                log(ERROR, "Linux Hybrid Worker registration file could not be created")
+            else:
+                os.chmod(AUTO_REGISTERED_WORKER_CONF_PATH, PERMISSION_LEVEL_0770)
+    except:
+        pass
 
-
+    try:
         # start the worker manager proc
-
-        if (settings.updates_enabled or settings.diy_enabled) and start_worker_manager_process(settings.workspace_id) < 0:
+        if (settings.updates_enabled or settings.diy_enabled) and start_worker_manager_process(
+                settings.workspace_id) < 0:
             log(ERROR, "Worker manager process could not be started. Set_Marshall returned [-1]")
             return [-1]
-
+        elif not settings.updates_enabled and not settings.diy_enabled:
+            log(DEBUG,
+                "No solutions requiring linux hybrid worker are enabled. Terminating the hybrid worker processes")
+            # Kill all workers and managers
+            kill_process_by_pattern_string(WORKSPACE_ID_PREFIX + settings.workspace_id)
+            if is_hybrid_worker_or_manager_running(settings.workspace_id):
+                raise Exception("Could not kill worker and manager processes")
         log(INFO, "Set_Marshall returned [0]. Exited successfully")
         return [0]
 
     except Exception, e:
-        log(ERROR, "Set_Marshall returned [-1] with following error %s" %e.message)
+        log(ERROR, "Set_Marshall returned [-1] with following error %s" % e.message)
         return [-1]
 
 
@@ -107,28 +159,35 @@ def Test_Marshall(ResourceSettings):
     :param ResourceSettings:
     :return: [0] if all tests pass [-1] otherwise
     """
-    settings = read_settings_from_mof_json(ResourceSettings)
-    if not is_oms_primary_workspace(settings.workspace_id):
-        # not primary workspace
-        # return unconditional [0] for a NOOP on non-primary workspace
-        log(DEBUG, "Test_Marshall skipped: non primary workspace. Test_Marshall returned [0]")
-        return [0]
-
-    if not os.path.isfile(OMS_CONF_FILE_PATH):
-        log(INFO, "Test_Marshall returned [-1]: oms.conf file not found")
+    try:
+        settings = read_settings_from_mof_json(ResourceSettings)
+        if not is_oms_primary_workspace(settings.workspace_id):
+            # not primary workspace
+            # return unconditional [0] for a NOOP on non-primary workspace
+            log(DEBUG, "Test_Marshall skipped: non primary workspace. Test_Marshall returned [0]")
+            return [0]
+        if get_stray_worker_and_manager_wsids(get_nxautomation_ps_output(), settings.workspace_id):
+            log(INFO, "Test_Marshall returned [-1]: process started by other workspaces detected")
+            return [-1]
+        if not os.path.isfile(OMS_CONF_FILE_PATH):
+            log(INFO, "Test_Marshall returned [-1]: oms.conf file not found")
+            return [-1]
+        if (settings.updates_enabled or settings.diy_enabled) and not is_worker_manager_running_latest_version(
+                settings.workspace_id):
+            # Either the worker manager is not running, or its not latest
+            log(INFO, "Test_Marshall returned [-1]: worker manager isn't running or is not latest")
+            return [-1]
+        if not settings.updates_enabled and not settings.diy_enabled and is_hybrid_worker_or_manager_running(
+                settings.workspace_id):
+            log(INFO, "Test_Marshall returned [-1]: worker or manager is running when no solution is enabled")
+            return [-1]
+        if not is_oms_config_consistent_with_mof(settings.updates_enabled, settings.diy_enabled):
+            # Current oms.conf is inconsistent with the mof
+            log(INFO, "Test_Marshall returned [-1]: oms.conf differs from configuration mof")
+            return [-1]
+    except Exception, e:
+        log(INFO, "Test_Marshall returned [-1]: %s" % e.message)
         return [-1]
-    if (settings.updates_enabled or settings.diy_enabled ) and is_worker_manager_running_latest_version(settings.workspace_id) is False:
-        # Either the worker manager is not running, or its not latest
-        log(INFO, "Test_Marshall returned [-1]: worker manager isn't running or is not latest")
-        return [-1]
-    if not settings.updates_enabled and not settings.diy_enabled and get_worker_manager_pid_and_version(settings.workspace_id, False)[0] > 0:
-        log(INFO, "Test_Marshall returned [-1]: worker manager is running when no solution is enabled")
-        return [-1]
-    if not is_oms_config_consistent_with_mof(settings.updates_enabled, settings.diy_enabled):
-        # Current oms.conf is inconsistent with the mof
-        log(INFO, "Test_Marshall returned [-1]: oms.conf differs from configuration mof")
-        return [-1]
-
     # All went well
     log(DEBUG, "Test_Marshall returned [0]")
     return [0]
@@ -148,6 +207,8 @@ def Get_Marshall(ResourceSettings):
 # ###########################################################
 # Begin user defined DSC functions
 # ###########################################################
+WORKSPACE_ID_PREFIX = "rworkspace:"
+
 ERROR = logging.ERROR
 DEBUG = logging.DEBUG
 INFO = logging.INFO
@@ -156,22 +217,25 @@ OPTION_OMS_WORKSPACE_ID = "WORKSPACE_ID"
 OPTION_AGENT_ID = "AGENT_GUID"
 
 SECTION_OMS_GLOBAL = "oms-global"
-OPTION_AUTO_REGISTERED_WORKER_CONF_PATH =  "auto_registered_worker_conf_path"
+OPTION_AUTO_REGISTERED_WORKER_CONF_PATH = "auto_registered_worker_conf_path"
 OPTION_MANUALLY_REGISTERED_WORKER_CONF_PATH = "manually_registered_worker_conf_path"
 OPTION_WORKSPACE_ID = "workspace_id"
-
 
 SECTION_OMS_WORKER_CONF = "oms-worker-conf"
 OPTION_RESOURCE_VERSION = "resource_version"
 OPTION_HYBRID_WORKER_PATH = "hybrid_worker_path"
 OPTION_DISABLE_WORKER_CREATION = "disable_worker_creation"
 
+SECTION_OMS_METADATA = "oms-metadata"
+
+SECTION_WORKER_REQUIRED = "worker-required"
+OPTION_ACCOUNT_ID = "account_id"
 
 WORKER_STATE_DIR = "/var/opt/microsoft/omsagent/state/automationworker"
 DIY_WORKER_STATE_DIR = os.path.join(WORKER_STATE_DIR, "diy")
 OMS_CONF_FILE_PATH = os.path.join(WORKER_STATE_DIR, "oms.conf")
 AUTO_REGISTERED_WORKER_CONF_PATH = os.path.join(WORKER_STATE_DIR, "worker.conf")
-MANUALLY_REGISTERED_WORKER_CONF_PATH = os.path.join(DIY_WORKER_STATE_DIR, "worker.conf")
+DIY_WORKER_CONF_PATH = os.path.join(DIY_WORKER_STATE_DIR, "worker.conf")
 STATE_CONF_FILE_PATH = os.path.join(WORKER_STATE_DIR, "state.conf")
 
 DSC_RESOURCE_VERSION_FILE = "/opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/VERSION"
@@ -179,12 +243,13 @@ OMS_ADMIN_CONFIG_FILE = "/etc/opt/microsoft/omsagent/conf/omsadmin.conf"
 WORKING_DIRECTORY_PATH = "/var/opt/microsoft/omsagent/run/automationworker"
 WORKER_MANAGER_START_PATH = "/opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/worker/main.py"
 HYBRID_WORKER_START_PATH = "/opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/worker/hybridworker.py"
-PROXY_CONF_PATH_LEGACY="/etc/opt/microsoft/omsagent/conf/proxy.conf"
-PROXY_CONF_PATH_NEW="/etc/opt/microsoft/omsagent/proxy.conf"
+PROXY_CONF_PATH_LEGACY = "/etc/opt/microsoft/omsagent/conf/proxy.conf"
+PROXY_CONF_PATH_NEW = "/etc/opt/microsoft/omsagent/proxy.conf"
 REGISTRATION_FILE_PATH = "/opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/scripts/register_oms.py"
 OMS_CERTIFICATE_PATH = "/etc/opt/microsoft/omsagent/certs/oms.crt"
 OMS_CERT_KEY_PATH = "/etc/opt/microsoft/omsagent/certs/oms.key"
-KEYRING_PATH="/etc/opt/omi/conf/omsconfig/keyring.gpg"
+KEYRING_PATH = "/etc/opt/omi/conf/omsconfig/keyring.gpg"
+OMS_UTIL_FILE_PATH = "/opt/microsoft/omsconfig/modules/nxOMSAutomationWorker/DSCResources/MSFT_nxOMSAutomationWorkerResource/automationworker/worker/omsutil.py"
 
 # permission level rwx rwx ---
 # leading zero is necessary because this is an octal number
@@ -197,13 +262,30 @@ AUTOMATION_USER = "nxautomation"
 LOCAL_LOG_LOCATION = "/var/opt/microsoft/omsagent/log/nxOMSAutomationWorker.log"
 LOG_LOCALLY = False
 
-# User defined functions
+
+def get_diy_account_id():
+    """
+    Gets the account id from diy conf file
+    :return: The account id if the configuration file exists, otherwise None
+    """
+    try:
+        diy_config = ConfigParser.ConfigParser()
+        diy_config.read(DIY_WORKER_CONF_PATH)
+        return diy_config.get(SECTION_WORKER_REQUIRED, OPTION_ACCOUNT_ID)
+    except:
+        return None
+
+
+def get_manually_registered_worker_conf_path(workspace_id):
+    return "/var/opt/microsoft/omsagent/%s/state/automationworker/diy/worker.conf" % workspace_id
+
 
 class Settings:
     workspace_id = ""
     azure_dns_agent_svc_zone = ""
     updates_enabled = ""
     diy_enabled = ""
+
     def __init__(self, workpsace_id, azure_dns_agent_svc_zone, updates_enabled, diy_enabled):
         self.workspace_id = workpsace_id
         self.azure_dns_agent_svc_zone = azure_dns_agent_svc_zone
@@ -225,12 +307,23 @@ def read_settings_from_mof_json(json_serialized_string):
         updates_enabled = settings[0]["Solutions"]["Updates"]["Enabled"]
         diy_enabled = settings[0]["Solutions"]["AzureAutomation"]["Enabled"]
         return Settings(workspace_id, azure_dns_agent_svc_zone, updates_enabled, diy_enabled)
-    except Exception as e:
-        log(ERROR, "Json parameters deserialization Error: " + Exception.message)
+    except Exception, e:
+        log(ERROR, "Json parameters deserialization Error: %s" % e.message)
         raise e
 
 
-def is_oms_config_consistent_with_mof(updates_enabled, diy_enabled, oms_conf_file_path = OMS_CONF_FILE_PATH):
+def is_hybrid_worker_or_manager_running(workspace_id):
+    search_expression = WORKSPACE_ID_PREFIX + workspace_id
+    result, retcode = run_pgrep_command(search_expression)
+    if result and retcode == 0:
+        log(DEBUG, "Hybrid worker and manager processes detected: %s" % result)
+        return True
+    else:
+        log(DEBUG, "No hybrid worker or manager processes found")
+        return False
+
+
+def is_oms_config_consistent_with_mof(updates_enabled, diy_enabled, oms_conf_file_path=OMS_CONF_FILE_PATH):
     if not os.path.isfile(oms_conf_file_path):
         return False
 
@@ -259,7 +352,7 @@ def write_omsconf_file(workspace_id, updates_enabled, diy_enabled):
         oms_config.remove_option(SECTION_OMS_WORKER_CONF, OPTION_AUTO_REGISTERED_WORKER_CONF_PATH)
     if diy_enabled:
         oms_config.set(SECTION_OMS_WORKER_CONF, OPTION_MANUALLY_REGISTERED_WORKER_CONF_PATH,
-                       MANUALLY_REGISTERED_WORKER_CONF_PATH)
+                       get_manually_registered_worker_conf_path(workspace_id))
     else:
         oms_config.remove_option(SECTION_OMS_WORKER_CONF, OPTION_MANUALLY_REGISTERED_WORKER_CONF_PATH)
 
@@ -274,6 +367,7 @@ def write_omsconf_file(workspace_id, updates_enabled, diy_enabled):
     oms_config_fp = open(OMS_CONF_FILE_PATH, 'wb')
     oms_config.write(oms_config_fp)
     oms_config_fp.close()
+
 
 def is_oms_primary_workspace(workspace_id):
     """
@@ -338,8 +432,8 @@ def start_worker_manager_process(workspace_id):
     :param workspace_id:
     :return: the pid of the worker manager process
     """
-    proc = subprocess.Popen(["sudo", "-u", AUTOMATION_USER, "python", WORKER_MANAGER_START_PATH, OMS_CONF_FILE_PATH, workspace_id,
-                             get_module_version()])
+    proc = subprocess.Popen(["sudo", "-u", AUTOMATION_USER, "python", WORKER_MANAGER_START_PATH, OMS_CONF_FILE_PATH,
+                             WORKSPACE_ID_PREFIX + workspace_id, get_module_version()])
     for i in range(0, 5):
         time.sleep(3)
         pid = get_worker_manager_pid_and_version(workspace_id, throw_error_on_multiple_found=False)[0]
@@ -352,38 +446,70 @@ def start_worker_manager_process(workspace_id):
     return -1
 
 
-def get_worker_manager_pid_and_version(workspace_id, throw_error_on_multiple_found = True):
+def is_any_1_3_process_running(processes, workspace_id):
+    for ps in processes:
+        if ps:
+            version = ps.split(" ")[-1]
+            if WORKER_MANAGER_START_PATH in ps and workspace_id in ps and version == "1.3":
+                return True
+    return False
+
+
+def get_worker_manager_pid_and_version(workspace_id, throw_error_on_multiple_found=True):
     """
     Returns the PID of the worker manager
     :return: pid of the worker manager, -1 if it isn't running
     """
-    if 'COLUMNS' in os.environ:
-        os.environ['COLUMNS'] = "3000"
-    else:
-        log(DEBUG, "environment variable COLUMNS was not found")
-    proc = subprocess.Popen(["ps", "-u", AUTOMATION_USER, "-o", "pid=", "-o", "args="], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    command, error = proc.communicate()
-    if proc.returncode != 0 or error:
-        log(INFO, "Failed to detect instance of worker manager")
-        return -1, "0.0"
-    processes = command.strip().split('\n')
+    processes = get_nxautomation_ps_output()
     manager_processes_found = 0
     pid = -1
     version = "0.0"
     for process_line in processes:
         if process_line:
+            process_line = str(process_line)
             # make sure process_line is not null or empty
-            split_line = process_line.strip().split(" ")
+            split_line = process_line.split(" ")
             args = " ".join(split_line[1:])
             if WORKER_MANAGER_START_PATH in args and workspace_id in args:
                 pid = int(split_line[0])
-                version = split_line[-1].strip()
+                version = split_line[-1]
                 manager_processes_found += 1
                 if throw_error_on_multiple_found and manager_processes_found > 1:
                     raise AssertionError("More than one manager processes found")
     if pid == -1:
         log(INFO, "Failed to detect instance of worker manager")
     return pid, version
+
+
+class Filter:
+    workpsace_id = ""
+
+    def __init__(self, workspace_id):
+        self.workpsace_id = workspace_id
+
+    def detect_stray_workspace(self, ps_string):
+        uuid_pattern = re.compile("[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}")
+        return uuid_pattern.findall(ps_string.lower()) and self.workpsace_id not in ps_string
+
+
+def get_nxautomation_ps_output():
+    if 'COLUMNS' in os.environ:
+        os.environ['COLUMNS'] = "3000"
+
+    proc = subprocess.Popen(["ps", "-u", AUTOMATION_USER, "-o", "pid=", "-o", "args="], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    command, error = proc.communicate()
+
+    if proc.returncode != 0 or error:
+        log(INFO, "Failed to read nxautomation user processes")
+        return []
+
+    command = command.strip()
+    if command:
+        processes = [x.strip() for x in command.split('\n')]
+    else:
+        processes = []
+    return processes
 
 
 def is_worker_manager_running_latest_version(workspace_id):
@@ -398,28 +524,57 @@ def is_worker_manager_running_latest_version(workspace_id):
     return pid > 0 and running_version == available_version
 
 
+def kill_stray_processes(workspace_id):
+    processes = get_nxautomation_ps_output()
+    for wrkspc_id in get_stray_worker_and_manager_wsids(processes, workspace_id):
+        kill_process_by_pattern_string(wrkspc_id)
+
+
+def get_stray_worker_and_manager_wsids(processes, workspace_id):
+    """
+    Gets the pids of the workers and that are running in the context of another user
+    :param workspace_id:
+    :return: list of pids not running in context of workspace_id
+    """
+    uuid_pattern = re.compile("rworkspace:([a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})")
+    all_workspaces = [uuid_pattern.search(x).group(1) for x in processes if uuid_pattern.findall(x.lower())]
+    return set(all_workspaces).difference([workspace_id])
+
+
 def kill_worker_manager(workspace_id):
     """ Worker manger process if it exists
     Exceptions:
         throws exception if process was running and could not be killed
     """
-    pattern_match_string = "python\s.*main\.py.*\s%s\s" %workspace_id
+    pattern_match_string = "python\s.*main\.py.*%s%s\s" % (WORKSPACE_ID_PREFIX, workspace_id)
 
-    #---- section for debugging
-    proc = subprocess.Popen(["pgrep", "-u", AUTOMATION_USER, "-f", pattern_match_string], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    result, error = proc.communicate()
-    result = str(result)
-    result = result.replace('\n', ' ')
-    log(DEBUG, "The following worker manager processes will be terminated: %s" %result)
-    #---- end section
-
-    subprocess.call(["sudo", "pkill", "-u", AUTOMATION_USER, "-f", pattern_match_string])
+    kill_process_by_pattern_string(pattern_match_string)
     # can't depend on the return value to ensure that the process was killed since it pattern matches
     pid, version = get_worker_manager_pid_and_version(workspace_id)
     if pid > 0:
         # worker was not killed
         raise OSError("Could not kill worker manager process")
     log(DEBUG, "Processes for worker manager were terminated successfully")
+
+
+def kill_process_by_pattern_string(pattern_match_string):
+    result, retcode = run_pgrep_command(pattern_match_string)
+    if retcode == 0:
+        log(DEBUG, "The following worker processes will be terminated: %s" % result)
+    else:
+        log(DEBUG, "No process to terminate")
+    # the above code is for logging only, we don't use its output to determine which process to kill
+    subprocess.call(["sudo", "pkill", "-u", AUTOMATION_USER, "-f", pattern_match_string])
+
+
+def run_pgrep_command(pattern_match_string):
+    proc = subprocess.Popen(["pgrep", "-u", AUTOMATION_USER, "-f", pattern_match_string], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    result, error = proc.communicate()
+    result = str(result)
+    result = result.replace('\n', ' ')
+    return result, proc.returncode
+
 
 def get_module_version():
     """
@@ -442,10 +597,11 @@ def nxautomation_user_exists():
         pwd.getpwnam(AUTOMATION_USER)
     except KeyError:
         # if the user was not found
-        log(INFO, "%s was NOT found on the system" %(AUTOMATION_USER))
+        log(INFO, "%s was NOT found on the system" % (AUTOMATION_USER))
         return False
-    log(INFO, "%s was found on the system" %(AUTOMATION_USER))
+    log(INFO, "%s was found on the system" % (AUTOMATION_USER))
     return True
+
 
 def read_oms_primary_workspace_config_file():
     # Reads the oms config file
@@ -485,6 +641,7 @@ def config_file_to_kv_pair(filename):
         retval[key] = value
     return retval
 
+
 def log(level, message):
     try:
         LG().Log(logging._levelNames[level], message)
@@ -499,8 +656,5 @@ def log(level, message):
 
 def log_local(level, message):
     log_fh = open(LOCAL_LOG_LOCATION, 'ab')
-    log_fh.write("%s: %s" %(logging._levelNames[level], message))
+    log_fh.write("%s: %s" % (logging._levelNames[level], message))
     log_fh.close()
-
-
-

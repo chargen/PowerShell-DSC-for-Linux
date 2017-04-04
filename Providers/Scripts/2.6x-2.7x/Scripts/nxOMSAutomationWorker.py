@@ -307,7 +307,7 @@ def read_settings_from_mof_json(json_serialized_string):
         updates_enabled = settings[0]["Solutions"]["Updates"]["Enabled"]
         diy_enabled = settings[0]["Solutions"]["AzureAutomation"]["Enabled"]
         return Settings(workspace_id, azure_dns_agent_svc_zone, updates_enabled, diy_enabled)
-    except Exception as e:
+    except Exception, e:
         log(ERROR, "Json parameters deserialization Error: %s" % e.message)
         raise e
 
